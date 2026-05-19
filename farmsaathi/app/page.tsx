@@ -1,3 +1,7 @@
+import LiveAlerts from "@/components/LiveAlerts";
+import LanguageSupport from "@/components/LanguageSupport";
+
+import Recommendations from "@/components/Recommendations";
 import Navbar from "@/components/Navbar";
 import Hero from "@/components/Hero";
 import Features from "@/components/Features";
@@ -24,6 +28,9 @@ export default function Home() {
       <Register />
       <Products />
       <Weather />
+      <Recommendations />
+      <LanguageSupport />
+      <LiveAlerts />
       <Trust />
       <Contact />
       <Footer />
