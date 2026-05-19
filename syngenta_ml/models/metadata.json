@@ -1,0 +1,19 @@
+{
+  "trained_at": "2026-05-19T12:54:05.500363",
+  "models": {
+    "engagement": {
+      "auc": 0.526831179005092
+    },
+    "channel": {
+      "accuracy": 1.0
+    },
+    "conversion": {
+      "auc": 0.5789290312807696
+    }
+  },
+  "data_stats": {
+    "growers": 6000,
+    "wa_messages": 4479,
+    "pos_transactions": 235042
+  }
+}
