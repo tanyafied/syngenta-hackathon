@@ -1,0 +1,31 @@
+{
+  "trained_at": "2026-05-19T16:17:20.937699",
+  "version": "2.0",
+  "models": {
+    "engagement": {
+      "auc": 0.49364146755451105,
+      "cv_auc": 0.498036389330507
+    },
+    "channel": {
+      "accuracy": 1.0
+    },
+    "product": {
+      "accuracy": 0.3433962264150943
+    },
+    "conversion": {
+      "auc": 0.6267377530779468,
+      "cv_auc": 0.6101312227057217
+    }
+  },
+  "features": {
+    "total_features": 35,
+    "includes_weather": true,
+    "includes_district_sales": true,
+    "smote_applied": true
+  },
+  "data_stats": {
+    "growers": 6000,
+    "wa_messages": 4479,
+    "pos_transactions": 235042
+  }
+}
