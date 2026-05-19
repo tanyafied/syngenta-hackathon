@@ -38,3 +38,46 @@ body {
   transform: translateY(-10px);
   transition: 0.3s;
 }
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #F5F5DC;
+  color: #1b4332;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #edf6ee;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2d6a4f;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #1b4332;
+}
+
+input,
+select,
+textarea {
+  outline: none;
+}
+
+button {
+  transition: all 0.3s ease;
+}

@@ -3,59 +3,176 @@
 import { useEffect, useState } from "react";
 
 export default function Farmers() {
+
   const [farmers, setFarmers] = useState([]);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
+
     fetch("http://localhost:5000/farmers")
       .then((res) => res.json())
       .then((data) => setFarmers(data));
+
   }, []);
 
   return (
-    <section className="py-20 px-6 bg-green-50">
-      <h1 className="text-4xl font-bold text-center text-green-900 mb-12">
-        Registered Farmers
-      </h1>
-      <input
-        type="text"
-        placeholder="Search by state..."
-        className="w-full p-4 rounded-xl border mb-10"
-        onChange={(e) => setSearch(e.target.value)}
-/>
 
-      <div className="grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {farmers
+    <section className="py-24 px-6 bg-white">
+
+      <div className="max-w-7xl mx-auto">
+
+        {/* HEADER */}
+
+        <div className="text-center mb-16">
+
+          <h2 className="text-5xl font-bold text-green-900">
+            Registered Farmer Intelligence
+          </h2>
+
+          <p className="text-gray-600 mt-4 text-lg">
+
+            Live farmer profiles generated from
+            agricultural datasets, crop activity,
+            and regional farming trends.
+
+          </p>
+
+        </div>
+
+        {/* SEARCH */}
+
+        <div className="mb-12">
+
+          <input
+            type="text"
+            placeholder="Search by state..."
+            className="w-full p-5 rounded-2xl border border-green-100 shadow-sm"
+            onChange={(e) => setSearch(e.target.value)}
+          />
+
+        </div>
+
+        {/* GRID */}
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
+
+          {farmers
             .filter((farmer: any) =>
-            farmer.state?.toLowerCase().includes(search.toLowerCase())
+              farmer.state
+                ?.toLowerCase()
+                .includes(search.toLowerCase())
             )
-            .slice(0, 9).map((farmer: any, index) => (
-          <div
-            key={index}
-            className="bg-white rounded-2xl shadow-lg p-6 border border-green-100"
-          >
-            <h2 className="text-xl font-bold text-green-800 mb-2">
-              Farmer #{index + 1}
-            </h2>
+            .slice(0, 9)
+            .map((farmer: any, index) => (
 
-            <p className="text-gray-700">
-              <strong>ID:</strong> {farmer.grower_id}
-            </p>
+              <div
+                key={index}
+                className="glass rounded-[2rem] p-8 shadow-xl border border-green-50"
+              >
 
-            <p className="text-gray-700">
-              <strong>State:</strong> {farmer.state}
-            </p>
+                {/* TOP */}
 
-            <p className="text-gray-700">
-              <strong>Language:</strong> {farmer.language}
-            </p>
+                <div className="flex justify-between items-center mb-8">
 
-            <p className="text-gray-700">
-              <strong>Crop:</strong> {farmer.grower_crop_calendar}
-            </p>
-          </div>
-        ))}
+                  <div>
+
+                    <p className="text-gray-500">
+                      Farmer ID
+                    </p>
+
+                    <h3 className="text-2xl font-bold text-green-900">
+                      #{farmer.grower_id}
+                    </h3>
+
+                  </div>
+
+                  <div className="text-5xl">
+                    🌾
+                  </div>
+
+                </div>
+
+                {/* DETAILS */}
+
+                <div className="space-y-4">
+
+                  <div className="flex justify-between">
+
+                    <span className="text-gray-500">
+                      State
+                    </span>
+
+                    <span className="font-bold text-green-900">
+                      {farmer.state}
+                    </span>
+
+                  </div>
+
+                  <div className="flex justify-between">
+
+                    <span className="text-gray-500">
+                      Language
+                    </span>
+
+                    <span className="font-bold text-green-900">
+                      {farmer.language}
+                    </span>
+
+                  </div>
+
+                  <div className="flex justify-between">
+
+                    <span className="text-gray-500">
+                      Crop Type
+                    </span>
+
+                    <span className="font-bold text-green-900">
+                      {farmer.grower_crop_calendar}
+                    </span>
+
+                  </div>
+
+                  <div className="flex justify-between">
+
+                    <span className="text-gray-500">
+                      AI Recommendation
+                    </span>
+
+                    <span className="font-bold text-yellow-600">
+                      Rice
+                    </span>
+
+                  </div>
+
+                </div>
+
+                {/* ALERT */}
+
+                <div className="mt-8 bg-yellow-50 border border-yellow-100 rounded-2xl p-5">
+
+                  <h4 className="font-bold text-yellow-700 mb-2">
+                    🚨 Smart Alert
+                  </h4>
+
+                  <p className="text-gray-600 text-sm">
+
+                    Rainfall expected within 48 hours.
+                    Recommended to delay pesticide spraying.
+
+                  </p>
+
+                </div>
+
+              </div>
+
+            ))}
+
+        </div>
+
       </div>
+
     </section>
+
   );
+
 }
