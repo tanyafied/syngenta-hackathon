@@ -1,91 +1,78 @@
-"use client";
-
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-
-const data = [
-  { month: "Jan", yield: 12, market: 10 },
-  { month: "Feb", yield: 19, market: 15 },
-  { month: "Mar", yield: 15, market: 12 },
-  { month: "Apr", yield: 25, market: 18 },
-  { month: "May", yield: 22, market: 28 },
-  { month: "Jun", yield: 30, market: 25 },
-];
-
 export default function Analytics() {
   return (
-    <section className="py-24 bg-white/50">
+    <section className="py-24 px-6 bg-white">
 
-      <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+      <div className="max-w-7xl mx-auto">
 
-        <div>
+        <div className="text-center mb-16">
 
-          <h2 className="text-4xl font-bold text-green-900 mb-6">
-            Real-Time Crop Analytics
+          <h2 className="text-4xl font-bold text-green-900">
+            Agricultural Insights
           </h2>
 
-          <p className="text-gray-600 mb-8 text-lg">
-            Track crop yield trends, market fluctuations,
-            and seasonal farming insights in real time.
+          <p className="text-gray-500 mt-4">
+            Real-time farmer engagement and campaign analytics.
           </p>
-
-          <div className="space-y-4">
-
-            <div className="flex items-center space-x-4 p-4 bg-white rounded-xl shadow-sm border-l-4 border-green-500">
-              <span className="text-2xl">📈</span>
-
-              <span className="font-semibold text-green-900">
-                Market prices expected to rise by 12%
-              </span>
-            </div>
-
-            <div className="flex items-center space-x-4 p-4 bg-white rounded-xl shadow-sm border-l-4 border-yellow-500">
-              <span className="text-2xl">⚠️</span>
-
-              <span className="font-semibold text-green-900">
-                Heavy rainfall predicted in nearby regions
-              </span>
-            </div>
-
-          </div>
 
         </div>
 
-        <div className="bg-white p-8 rounded-3xl shadow-xl h-[400px]">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
 
-          <ResponsiveContainer width="100%" height="100%">
+          <div className="glass p-8 rounded-3xl shadow-lg">
+            <p className="text-gray-500 mb-2">
+              Registered Farmers
+            </p>
 
-            <LineChart data={data}>
+            <h3 className="text-5xl font-bold text-green-800">
+              12.4K
+            </h3>
 
-              <XAxis dataKey="month" />
+            <p className="text-green-600 mt-4">
+              +18% this month
+            </p>
+          </div>
 
-              <YAxis />
+          <div className="glass p-8 rounded-3xl shadow-lg">
+            <p className="text-gray-500 mb-2">
+              Campaign Reach
+            </p>
 
-              <Tooltip />
+            <h3 className="text-5xl font-bold text-green-800">
+              89%
+            </h3>
 
-              <Line
-                type="monotone"
-                dataKey="yield"
-                stroke="#4CAF50"
-                strokeWidth={4}
-              />
+            <p className="text-green-600 mt-4">
+              WhatsApp engagement improved
+            </p>
+          </div>
 
-              <Line
-                type="monotone"
-                dataKey="market"
-                stroke="#FBC02D"
-                strokeWidth={4}
-              />
+          <div className="glass p-8 rounded-3xl shadow-lg">
+            <p className="text-gray-500 mb-2">
+              Retailers Active
+            </p>
 
-            </LineChart>
+            <h3 className="text-5xl font-bold text-green-800">
+              2.1K
+            </h3>
 
-          </ResponsiveContainer>
+            <p className="text-green-600 mt-4">
+              Across multiple regions
+            </p>
+          </div>
+
+          <div className="glass p-8 rounded-3xl shadow-lg">
+            <p className="text-gray-500 mb-2">
+              Product Recommendations
+            </p>
+
+            <h3 className="text-5xl font-bold text-green-800">
+              95%
+            </h3>
+
+            <p className="text-green-600 mt-4">
+              Farmer satisfaction rate
+            </p>
+          </div>
 
         </div>
 

@@ -23,13 +23,13 @@ export default function Hero() {
           SMART FARMING PLATFORM
         </span>
 
-        <h1 className="text-5xl md:text-7xl font-bold text-white mb-6">
+        <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold text-white mb-6">
           Smart Farming.
           <br />
           Better Harvests.
         </h1>
 
-        <p className="text-xl text-green-50 mb-10 leading-relaxed">
+        <p className="text-base md:text-xl text-green-50 mb-10 leading-relaxed">
           Helping farmers with weather insights, crop guidance,
           fertilizer recommendations, and better market opportunities.
         </p>
