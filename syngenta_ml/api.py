@@ -1,535 +1,469 @@
 """
-Syngenta IITM Hackathon 2026 — ML REST API
-==========================================
-Run: python api.py
-Base URL: http://localhost:5000
+Syngenta IITM Hackathon 2026 — ML API v3
+=========================================
+Built around exact feature lists from trained models.
 
-Endpoints:
-  POST /predict/engagement      — Will this grower engage with a campaign?
-  POST /predict/channel         — Best channel for this grower
-  POST /predict/product         — Best product to recommend
-  POST /predict/conversion      — Overall conversion propensity score
-  POST /predict/full            — All predictions in one call (recommended)
-  POST /segment                 — Get grower persona/segment
-  GET  /health                  — Health check
-  GET  /models/info             — Model performance stats
+Run: python api.py
 """
 
-from flask import Flask, request, jsonify
-import joblib, json, os, traceback
-import pandas as pd
+import json, os, joblib, traceback
 import numpy as np
+import pandas as pd
 from datetime import datetime
+from flask import Flask, request, jsonify
+from feature_engineering import engineer_features, get_weather_for_district
+from train import parse_crop_calendar
 
 app = Flask(__name__)
 MODEL_DIR = "models"
+MODELS = {}
 
-# ─── Load models at startup ───────────────────
-models = {}
+# ─────────────────────────────────────────────
+# EXACT FEATURE LISTS (copied from trained models)
+# ─────────────────────────────────────────────
+
+ENGAGEMENT_FEATURES = [
+    'device_score', 'grower_age', 'grower_farm_size', 'product_scan',
+    'offline_campaign_attended', 'days_since_scan', 'growth_stage_encoded',
+    'days_to_harvest', 'message_dow', 'message_month', 'season_phase',
+    'crop_message_match', 'crop_enc', 'lang_enc', 'state_enc',
+    'farm_x_device', 'age_tech_sweet_spot', 'is_young_farmer', 'is_elder_farmer',
+    'engagement_velocity', 'any_engagement', 'is_small_farm', 'is_large_farm',
+    'farm_size_log', 'harvest_urgency', 'mid_season', 'days_to_harvest_log',
+    'optimal_send_day', 'optimal_send_month', 'language_region_match',
+    'same_crop_family', 'recently_engaged', 'days_since_scan_log',
+    'district_sales_log'
+]
+
+CONVERSION_FEATURES = [
+    'device_score', 'grower_age', 'grower_farm_size', 'product_scan',
+    'offline_campaign_attended', 'days_since_scan', 'growth_stage_encoded',
+    'days_to_harvest', 'num_crop_stages', 'message_dow', 'message_month',
+    'season_phase', 'crop_message_match', 'crop_enc', 'lang_enc', 'state_enc',
+    'farm_x_device', 'age_tech_sweet_spot', 'is_young_farmer', 'is_elder_farmer',
+    'engagement_velocity', 'any_engagement', 'is_small_farm', 'is_large_farm',
+    'farm_size_log', 'harvest_urgency', 'mid_season', 'days_to_harvest_log',
+    'optimal_send_day', 'optimal_send_month', 'language_region_match',
+    'same_crop_family', 'recently_engaged', 'days_since_scan_log',
+    'district_sales_log'
+]
+
+CHANNEL_FEATURES = [
+    'device_score', 'grower_age', 'grower_farm_size',
+    'growth_stage_encoded', 'days_to_harvest',
+    'farm_x_device', 'age_tech_sweet_spot', 'any_engagement',
+    'is_elder_farmer', 'language_region_match',
+    'state_enc', 'crop_enc'
+]
+
+PRODUCT_FEATURES = [
+    'device_score', 'grower_age', 'grower_farm_size',
+    'growth_stage_encoded', 'days_to_harvest',
+    'farm_x_device', 'age_tech_sweet_spot', 'harvest_urgency',
+    'farm_size_log', 'days_to_harvest_log',
+    'crop_enc', 'state_enc', 'lang_enc'
+]
+
+SEGMENT_FEATURES = [
+    'device_score', 'grower_age', 'grower_farm_size',
+    'growth_stage_encoded', 'days_to_harvest',
+    'farm_x_device', 'age_tech_sweet_spot', 'any_engagement',
+    'harvest_urgency', 'language_region_match',
+    'crop_enc', 'state_enc'
+]
+
+
+# ─────────────────────────────────────────────
+# LOAD MODELS
+# ─────────────────────────────────────────────
 
 def load_models():
-    global models
-    model_files = {
+    files = {
         "engagement": "engagement_model.pkl",
         "channel":    "channel_model.pkl",
-        "timing":     "timing_model.pkl",
         "product":    "product_model.pkl",
         "conversion": "conversion_model.pkl",
         "segment":    "segmentation_model.pkl",
     }
-    for name, fname in model_files.items():
+    print("Syngenta ML API v3 starting...")
+    for name, fname in files.items():
         path = os.path.join(MODEL_DIR, fname)
         if os.path.exists(path):
-            models[name] = joblib.load(path)
-            print(f"  ✅ Loaded: {name}")
+            MODELS[name] = joblib.load(path)
+            print(f"  Loaded: {name}")
         else:
-            print(f"  ⚠  Missing: {name} ({path})")
-
-    meta_path = os.path.join(MODEL_DIR, "metadata.json")
-    if os.path.exists(meta_path):
-        with open(meta_path) as f:
-            models["metadata"] = json.load(f)
+            print(f"  Missing: {fname} — run train.py first")
 
 
-# ─── Feature builder (mirrors train.py) ───────
+# ─────────────────────────────────────────────
+# SAFE LABEL ENCODER
+# ─────────────────────────────────────────────
 
-CROP_STAGE_MAP = {
-    "sowing": 0, "germination": 0, "tillering": 1,
-    "vegetative": 1, "flowering": 2, "grain filling": 2,
-    "ripening": 3, "maturity": 3, "harvest": 4
-}
+def safe_encode(le, value):
+    try:
+        return int(le.transform([value])[0])
+    except:
+        return 0
 
-LANG_REGION = {
-    "Hindi": ["Uttar Pradesh", "Rajasthan", "Madhya Pradesh", "Bihar", "Haryana"],
-    "Punjabi": ["Punjab"],
-    "Marathi": ["Maharashtra"],
-    "Gujarati": ["Gujarat"],
-    "Kannada": ["Karnataka"],
-    "Bengali": ["West Bengal"]
-}
 
-DEVICE_MAP = {"smartphone": 2, "keypad": 1, "unknown": 0}
+# ─────────────────────────────────────────────
+# CORE: BUILD ALL FEATURES FROM REQUEST
+# ─────────────────────────────────────────────
 
-def parse_crop_calendar_api(cal):
-    """Accept dict or JSON string, return crop features."""
+def build_all_features(data: dict) -> dict:
+    # 1. Parse crop calendar
+    cal = data.get("grower_crop_calendar", {})
     if isinstance(cal, str):
         try:
             cal = json.loads(cal)
         except:
-            return {"crop": "unknown", "days_to_harvest": 120,
-                    "num_crop_stages": 0, "growth_stage_encoded": 0}
+            cal = {}
+    crop, days_to_harvest, num_crop_stages, growth_stage_encoded = parse_crop_calendar(cal)
 
-    crop = cal.get("crop", "unknown")
-    harvest_start = cal.get("harvest", {}).get("start", None)
-    stages = cal.get("stages", [])
-    stage_names = [s.get("stage", "") for s in stages]
-    max_stage = max([CROP_STAGE_MAP.get(s, 0) for s in stage_names], default=0)
-
-    days_to_harvest = 120
-    if harvest_start:
-        try:
-            h = datetime.strptime(harvest_start, "%Y-%m-%d")
-            ref = datetime(2025, 11, 15)
-            days_to_harvest = max(0, (h - ref).days)
-        except:
-            pass
-
-    return {
-        "crop": crop,
-        "days_to_harvest": days_to_harvest,
-        "num_crop_stages": len(stages),
-        "growth_stage_encoded": max_stage
-    }
-
-
-def build_features_from_request(data: dict) -> dict:
-    """
-    Build all features from a grower + campaign request payload.
-    
-    Expected fields (all optional with defaults):
-      grower_id, state, district, language, device_type, grower_age,
-      gender, grower_crop_calendar (JSON), product_scan (bool),
-      offline_campaign_attended (bool), grower_farm_size,
-      campaign_crop, message_sent_date (ISO string)
-    """
-    # Calendar parsing
-    cal = data.get("grower_crop_calendar", {})
-    cal_feat = parse_crop_calendar_api(cal)
-    crop = cal_feat["crop"]
-
-    # Grower basics
-    device_type = data.get("device_type", "unknown")
-    device_score = DEVICE_MAP.get(device_type, 0)
-    grower_age = float(data.get("grower_age", 40))
+    # 2. Basic fields
+    grower_age       = float(data.get("grower_age", 40))
     grower_farm_size = float(data.get("grower_farm_size", 2.0))
-    state = data.get("state", "Unknown")
-    language = data.get("language", "Hindi")
+    device_type      = data.get("device_type", "unknown")
+    device_score     = float({"smartphone": 2, "keypad": 1, "unknown": 0}.get(device_type, 0))
+    product_scan     = float(int(bool(data.get("product_scan", False))))
+    offline_attended = float(int(bool(data.get("offline_campaign_attended", False))))
+    state            = str(data.get("state", "Unknown"))
+    language         = str(data.get("language", "Hindi"))
+    district         = str(data.get("district", "DEFAULT"))
+    campaign_crop    = str(data.get("campaign_crop", crop))
 
-    product_scan = int(bool(data.get("product_scan", False)))
-    offline_attended = int(bool(data.get("offline_campaign_attended", False)))
-    engagement_score = product_scan + offline_attended
-
-    lang_match = 1 if state in LANG_REGION.get(language, []) else 0
-
-    # Days since scan
-    scan_dt_str = data.get("product_scan_datetime", None)
-    days_since_scan = 999
-    if scan_dt_str:
+    # 3. Days since scan
+    scan_dt = data.get("product_scan_datetime", None)
+    if scan_dt:
         try:
-            scan_dt = datetime.fromisoformat(scan_dt_str)
-            days_since_scan = max(0, (datetime(2026, 4, 1) - scan_dt).days)
+            ref = datetime(2026, 4, 1)
+            days_since_scan = float(max(0, (ref - datetime.strptime(str(scan_dt)[:10], "%Y-%m-%d")).days))
         except:
-            pass
+            days_since_scan = 999.0
+    else:
+        days_since_scan = 999.0
 
-    # Campaign timing
-    msg_date_str = data.get("message_sent_date", datetime.now().strftime("%Y-%m-%d"))
+    # 4. Message date
+    msg_date_str = str(data.get("message_sent_date", datetime.now().strftime("%Y-%m-%d")))
     try:
-        msg_date = datetime.strptime(msg_date_str, "%Y-%m-%d")
+        msg_date      = datetime.strptime(msg_date_str[:10], "%Y-%m-%d")
+        message_dow   = float(msg_date.weekday())
+        message_month = float(msg_date.month)
     except:
-        msg_date = datetime.now()
+        message_dow   = 1.0
+        message_month = 1.0
 
-    msg_dow = msg_date.weekday()
-    msg_month = msg_date.month
+    season_phase       = 0.0 if message_month in [10, 11] else 1.0 if message_month in [12, 1, 2] else 2.0
+    crop_message_match = 1.0 if campaign_crop == crop else 0.0
 
-    def season_phase(m):
-        if m in [10, 11]: return 0
-        elif m in [12, 1, 2]: return 1
-        return 2
-
-    campaign_crop = data.get("campaign_crop", crop)
-    crop_message_match = 1 if campaign_crop == crop else 0
-
-    return {
-        "crop": crop,
-        "device_score": device_score,
-        "grower_age": grower_age,
-        "grower_farm_size": grower_farm_size,
-        "engagement_score": engagement_score,
-        "product_scan": product_scan,
-        "offline_campaign_attended": offline_attended,
-        "language_region_match": lang_match,
-        "days_since_scan": days_since_scan,
-        "message_dow": msg_dow,
-        "message_month": msg_month,
-        "season_phase": season_phase(msg_month),
-        "crop_message_match": crop_message_match,
-        "growth_stage_encoded": cal_feat["growth_stage_encoded"],
-        "days_to_harvest": cal_feat["days_to_harvest"],
-        "num_crop_stages": cal_feat["num_crop_stages"],
-        "state": state,
-        "language": language,
-        "device_type": device_type,
+    # 5. Engineer features
+    row_for_eng = {
+        "grower_age": grower_age, "grower_farm_size": grower_farm_size,
+        "device_type": device_type, "product_scan": int(product_scan),
+        "offline_campaign_attended": int(offline_attended),
+        "state": state, "language": language, "district": district,
+        "campaign_crop": campaign_crop, "crop": crop,
+        "days_to_harvest": days_to_harvest, "days_since_scan": days_since_scan,
+        "message_sent_date": msg_date_str[:10],
     }
+    eng = engineer_features(row_for_eng)
 
+    # 6. Label encode for each model separately
+   # 6. Label encode for each model separately
+    em = MODELS.get("engagement")
+    cm = MODELS.get("channel")
+    pm = MODELS.get("product")
+    conv_m = MODELS.get("conversion")
 
-def safe_encode(le, value, default_val=0):
-    """Encode with label encoder, handle unseen labels."""
-    try:
-        return int(le.transform([value])[0])
-    except:
-        return default_val
+    # engagement encoders
+    crop_enc  = float(safe_encode(em["le_crop"],  crop))     if em else 0.0
+    lang_enc  = float(safe_encode(em["le_lang"],  language)) if em else 0.0
+    state_enc = float(safe_encode(em["le_state"], state))    if em else 0.0
 
+    # channel encoders (no le_lang in channel model)
+    crop_enc_c  = float(safe_encode(cm["le_crop"],  crop))   if cm else crop_enc
+    state_enc_c = float(safe_encode(cm["le_state"], state))  if cm else state_enc
 
-def predict_engagement(features: dict) -> dict:
-    m = models.get("engagement")
-    if not m: return {"error": "model not loaded"}
-    crop_enc = safe_encode(m["le_crop"], features["crop"])
-    lang_enc = safe_encode(m["le_lang"], features["language"])
-    state_enc = safe_encode(m["le_state"], features["state"])
-    features.update({"crop_enc": crop_enc, "lang_enc": lang_enc, "state_enc": state_enc})
-    X = pd.DataFrame([[features.get(c, 0) for c in m["feature_cols"]]], columns=m["feature_cols"])
-    prob = float(m["model"].predict_proba(X)[0][1])
-    return {
-        "click_probability": round(prob, 4),
-        "will_engage": prob > 0.05,
-        "engagement_tier": "high" if prob > 0.15 else "medium" if prob > 0.05 else "low"
+    # product encoders
+    crop_enc_p  = float(safe_encode(pm["le_crop"],  crop))     if pm else crop_enc
+    lang_enc_p  = float(safe_encode(pm["le_lang"],  language)) if pm else lang_enc
+    state_enc_p = float(safe_encode(pm["le_state"], state))    if pm else state_enc
+
+    # 7. Master flat dict
+    f = {
+        "device_score":               device_score,
+        "grower_age":                 grower_age,
+        "grower_farm_size":           grower_farm_size,
+        "product_scan":               product_scan,
+        "offline_campaign_attended":  offline_attended,
+        "days_since_scan":            days_since_scan,
+        "growth_stage_encoded":       float(growth_stage_encoded),
+        "days_to_harvest":            float(days_to_harvest),
+        "num_crop_stages":            float(num_crop_stages),
+        "message_dow":                message_dow,
+        "message_month":              message_month,
+        "season_phase":               season_phase,
+        "crop_message_match":         crop_message_match,
+        "district_sales_log":         0.0,
+        # engineered
+        "farm_x_device":       float(eng.get("farm_x_device", 0)),
+        "age_tech_sweet_spot": float(eng.get("age_tech_sweet_spot", 0)),
+        "is_young_farmer":     float(eng.get("is_young_farmer", 0)),
+        "is_elder_farmer":     float(eng.get("is_elder_farmer", 0)),
+        "engagement_velocity": float(eng.get("engagement_velocity", 0)),
+        "any_engagement":      float(eng.get("any_engagement", 0)),
+        "is_small_farm":       float(eng.get("is_small_farm", 0)),
+        "is_large_farm":       float(eng.get("is_large_farm", 0)),
+        "farm_size_log":       float(eng.get("farm_size_log", 0)),
+        "harvest_urgency":     float(eng.get("harvest_urgency", 0)),
+        "mid_season":          float(eng.get("mid_season", 0)),
+        "days_to_harvest_log": float(eng.get("days_to_harvest_log", 0)),
+        "optimal_send_day":    float(eng.get("optimal_send_day", 0)),
+        "optimal_send_month":  float(eng.get("optimal_send_month", 0)),
+        "language_region_match": float(eng.get("language_region_match", 0)),
+        "same_crop_family":    float(eng.get("same_crop_family", 0)),
+        "recently_engaged":    float(eng.get("recently_engaged", 0)),
+        "days_since_scan_log": float(eng.get("days_since_scan_log", 0)),
+        # encoded — engagement/conversion
+        "crop_enc":   crop_enc,
+        "lang_enc":   lang_enc,
+        "state_enc":  state_enc,
+        # encoded — channel
+        "crop_enc_c":  crop_enc_c,
+        "state_enc_c": state_enc_c,
+        # encoded — product
+        "crop_enc_p":  crop_enc_p,
+        "lang_enc_p":  lang_enc_p,
+        "state_enc_p": state_enc_p,
+        # meta
+        "_crop": crop, "_lang": language, "_district": district,
     }
+    return f
 
 
-def predict_channel(features: dict) -> dict:
-    m = models.get("channel")
-    if not m: return {"error": "model not loaded"}
-    state_enc = safe_encode(m["le_state"], features["state"])
-    features["state_enc"] = state_enc
-    X = pd.DataFrame([[features.get(c, 0) for c in m["feature_cols"]]], columns=m["feature_cols"])
+def make_df(features: dict, cols: list,
+            crop_key="crop_enc", lang_key="lang_enc", state_key="state_enc") -> pd.DataFrame:
+    row = {}
+    for col in cols:
+        if col == "crop_enc":
+            row[col] = features.get(crop_key, 0.0)
+        elif col == "lang_enc":
+            row[col] = features.get(lang_key, 0.0)
+        elif col == "state_enc":
+            row[col] = features.get(state_key, 0.0)
+        else:
+            row[col] = float(features.get(col, 0.0))
+    df = pd.DataFrame([row])[cols]
+    # Convert to numpy array to bypass sklearn feature name checking
+    return df.values.reshape(1, -1)
+
+
+# ─────────────────────────────────────────────
+# PREDICTIONS
+# ─────────────────────────────────────────────
+
+def predict_engagement(f):
+    X = make_df(f, ENGAGEMENT_FEATURES)
+    return float(MODELS["engagement"]["model"].predict_proba(X)[0][1])
+
+def predict_channel(f):
+    m = MODELS["channel"]
+    X = make_df(f, CHANNEL_FEATURES, crop_key="crop_enc_c", state_key="state_enc_c")
+    pred  = int(m["model"].predict(X)[0])
     probs = m["model"].predict_proba(X)[0]
-    channel_idx = int(np.argmax(probs))
-    channel_labels = m["channel_labels"]
-    all_channels = {channel_labels[i]: round(float(p), 3) for i, p in enumerate(probs)}
+    labels = {0:"WhatsApp", 1:"SMS", 2:"Voice", 3:"Retailer Visit"}
     return {
-        "recommended_channel": channel_labels[channel_idx],
-        "channel_scores": all_channels,
-        "fallback_channel": channel_labels[int(np.argsort(probs)[-2])]
+        "recommended_channel": labels.get(pred, "WhatsApp"),
+        "channel_id": pred,
+        "channel_probabilities": {labels.get(i, str(i)): round(float(p), 3) for i, p in enumerate(probs)}
     }
 
-
-def predict_product(features: dict) -> dict:
-    m = models.get("product")
-    if not m or "model" not in m: 
-        # Fallback: crop-to-product mapping
-        crop_product_map = {
-            "wheat": "Topik 15 WP", "mustard": "Score 250 EC",
-            "chickpea": "Actara 25 WG", "potato": "Kavach 75 WP",
-            "barley": "Topik 15 WP", "lentil": "Actara 25 WG",
-            "safflower": "Score 250 EC", "cumin": "Actara 25 WG",
-            "maize": "Ampligo 150 ZC"
-        }
-        crop = features.get("crop", "unknown")
-        product = crop_product_map.get(crop, "Score 250 EC")
-        return {"recommended_product": product, "confidence": 0.5, "method": "heuristic"}
-
-    crop_enc = safe_encode(m["le_crop"], features["crop"])
-    state_enc = safe_encode(m["le_state"], features["state"])
-    lang_enc = safe_encode(m["le_lang"], features["language"])
-    features.update({"crop_enc": crop_enc, "state_enc": state_enc, "lang_enc": lang_enc})
-    X = pd.DataFrame([[features.get(c, 0) for c in m["feature_cols"]]], columns=m["feature_cols"])
+def predict_product(f):
+    m  = MODELS["product"]
+    X  = make_df(f, PRODUCT_FEATURES, crop_key="crop_enc_p", lang_key="lang_enc_p", state_key="state_enc_p")
+    pred  = int(m["model"].predict(X)[0])
     probs = m["model"].predict_proba(X)[0]
-    top3_idx = np.argsort(probs)[-3:][::-1]
-    top3 = [{"product": m["le_product"].inverse_transform([i])[0], "score": round(float(probs[i]), 3)}
-            for i in top3_idx]
+    le    = m["le_product"]
+    top3  = [{"product": le.inverse_transform([i])[0], "score": round(float(probs[i]),3)}
+             for i in probs.argsort()[-3:][::-1]]
+    return {"recommended_product": le.inverse_transform([pred])[0], "top_3_products": top3}
+
+def predict_conversion(f):
+    X = make_df(f, CONVERSION_FEATURES)
+    return float(MODELS["conversion"]["model"].predict_proba(X)[0][1])
+
+def predict_segment(f):
+    m  = MODELS["segment"]
+    X  = make_df(f, SEGMENT_FEATURES, crop_key="crop_enc_c", state_key="state_enc_c")
+    Xs = m["scaler"].transform(X)
+    sid = int(m["kmeans"].predict(Xs)[0])
+    return {"segment_id": sid, "persona": m["segment_labels"].get(sid, f"Segment {sid}")}
+
+
+# ─────────────────────────────────────────────
+# CONTENT BRIEF
+# ─────────────────────────────────────────────
+
+CROP_HOOKS = {
+    "wheat":    {"Hindi":"गेहूं की फसल को सुरक्षित रखें", "English":"Protect your wheat crop"},
+    "rice":     {"Hindi":"धान की फसल बचाएं",              "English":"Save your paddy crop"},
+    "mustard":  {"Hindi":"सरसों में रोग से बचाव करें",    "English":"Prevent mustard disease"},
+    "chickpea": {"Hindi":"चने की फसल को मजबूत करें",      "English":"Strengthen your chickpea"},
+    "cotton":   {"Hindi":"कपास की पैदावार बढ़ाएं",         "English":"Boost cotton yield"},
+    "maize":    {"Hindi":"मक्के की फसल सुरक्षित करें",    "English":"Protect your maize"},
+}
+
+def build_content_brief(f, product_result, channel_result, conv_prob, segment_result):
+    crop    = f.get("_crop", "wheat")
+    lang    = f.get("_lang", "Hindi")
+    channel = channel_result["recommended_channel"]
+    product = product_result["recommended_product"]
+    hook_map = CROP_HOOKS.get(crop, {"Hindi":"फसल को सुरक्षित रखें","English":"Protect your crop"})
+    hook     = hook_map.get(lang, hook_map["English"])
+    urgency  = "HIGH" if f.get("harvest_urgency") else "MEDIUM" if f.get("mid_season") else "LOW"
+    fmt = {"WhatsApp":"2-3 short paras, emoji, image concept, CTA button",
+           "SMS":"Max 160 chars — product + benefit + number",
+           "Voice":"30-sec script, simple language, repeat product name twice",
+           "Retailer Visit":"3 bullet talking points + demo script"}.get(channel,"Short clear message")
     return {
-        "recommended_product": top3[0]["product"],
-        "confidence": top3[0]["score"],
-        "top_3_products": top3,
-        "method": "ml"
+        "hook": hook, "language": lang, "product_focus": product,
+        "channel_format": fmt, "urgency_level": urgency,
+        "persona_target": segment_result["persona"],
+        "conversion_probability": f"{conv_prob:.1%}",
+        "suggested_cta": f"Call 1800-XXX-XXXX to get {product} at your nearest retailer",
+        "visual_concept": f"Split image: healthy {crop} field vs diseased. {product} logo bottom-right.",
     }
 
 
-def predict_conversion(features: dict) -> dict:
-    m = models.get("conversion")
-    if not m: return {"error": "model not loaded"}
-    crop_enc = safe_encode(m["le_crop"], features["crop"])
-    lang_enc = safe_encode(m["le_lang"], features["language"])
-    state_enc = safe_encode(m["le_state"], features["state"])
-    features.update({"crop_enc": crop_enc, "lang_enc": lang_enc, "state_enc": state_enc})
-    X = pd.DataFrame([[features.get(c, 0) for c in m["feature_cols"]]], columns=m["feature_cols"])
-    prob = float(m["model"].predict_proba(X)[0][1])
-    
-    # Percentile bucket (estimated from training distribution)
-    tier = "top" if prob > 0.20 else "mid" if prob > 0.08 else "low"
-    return {
-        "conversion_probability": round(prob, 4),
-        "conversion_tier": tier,
-        "priority_score": round(prob * 100, 1)
-    }
-
-
-def get_segment(features: dict) -> dict:
-    m = models.get("segment")
-    if not m: return {"segment_id": 0, "persona": "Unknown"}
-    crop_enc = safe_encode(m["le_crop"], features["crop"])
-    features["crop_enc"] = crop_enc
-    feat_vec = [features.get(c, 0) for c in m["cluster_features"]]
-    X = np.array(feat_vec).reshape(1, -1)
-    X_scaled = m["scaler"].transform(X)
-    seg_id = int(m["kmeans"].predict(X_scaled)[0])
-    return {
-        "segment_id": seg_id,
-        "persona": m["segment_labels"].get(seg_id, "Unknown Segment")
-    }
-
-
-def generate_content_template(features: dict, product: str, channel: str, language: str) -> dict:
-    """Generate a personalized content framework for the campaign."""
-    crop = features.get("crop", "wheat")
-    stage = features.get("growth_stage_encoded", 1)
-    stage_names = ["sowing", "tillering", "flowering", "ripening", "harvest"]
-    stage_name = stage_names[min(stage, 4)]
-    farm_size = features.get("grower_farm_size", 2.0)
-
-    # Message tone based on device
-    device_score = features.get("device_score", 2)
-    is_feature_phone = device_score < 2
-
-    # Channel-specific format
-    format_map = {
-        "WhatsApp": "rich_message_with_image",
-        "SMS": "short_sms_160chars",
-        "Voice": "ivr_script_30sec",
-        "Retailer Visit": "in_store_talking_points"
-    }
-
-    content_brief = {
-        "crop": crop,
-        "growth_stage": stage_name,
-        "product": product,
-        "channel_format": format_map.get(channel, "rich_message_with_image"),
-        "language": language,
-        "tone": "simple_vernacular" if is_feature_phone else "informative_visual",
-        "key_message_hooks": [
-            f"Your {crop} is at {stage_name} stage — protect your yield now",
-            f"{product} proven for {crop} growers in your region",
-            f"Ideal time to apply — {stage_name} is critical for protection"
-        ],
-        "call_to_action": "Call your nearest retailer" if channel == "Voice"
-                          else "Tap to know more" if device_score == 2
-                          else "Reply YES for details",
-        "visual_concept": f"{crop.capitalize()} field at {stage_name}, farmer inspecting crop, {product} pack visible",
-        "content_length": "short" if is_feature_phone else "medium"
-    }
-    return content_brief
-
-
-# ─── API ROUTES ────────────────────────────────
+# ─────────────────────────────────────────────
+# ROUTES
+# ─────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({
-        "status": "ok",
-        "models_loaded": list(models.keys()),
-        "timestamp": datetime.now().isoformat()
-    })
-
+    return jsonify({"status":"ok","models_loaded":list(MODELS.keys()),
+                    "version":"3.0","timestamp":datetime.now().isoformat()})
 
 @app.route("/models/info", methods=["GET"])
-def model_info():
-    meta = models.get("metadata", {})
-    return jsonify(meta)
+def models_info():
+    p = os.path.join(MODEL_DIR,"metadata.json")
+    return jsonify(json.load(open(p))) if os.path.exists(p) else jsonify({"error":"Run train.py first"})
 
+@app.route("/predict/full", methods=["POST"])
+def route_full():
+    try:
+        data = request.get_json(force=True)
+        f    = build_all_features(data)
+        eng  = predict_engagement(f)
+        ch   = predict_channel(f)
+        pr   = predict_product(f)
+        conv = predict_conversion(f)
+        seg  = predict_segment(f)
+        brief= build_content_brief(f, pr, ch, conv, seg)
+        wthr = get_weather_for_district(data.get("district","DEFAULT"))
+        return jsonify({
+            "grower_id": data.get("grower_id","unknown"),
+            "campaign_action": {
+                "recommended_channel":   ch["recommended_channel"],
+                "recommended_product":   pr["recommended_product"],
+                "top_3_products":        pr["top_3_products"],
+                "channel_probabilities": ch["channel_probabilities"],
+            },
+            "scores": {
+                "engagement_probability": round(eng,4),
+                "conversion_probability": round(conv,4),
+                "conversion_percent":     f"{conv:.1%}",
+                "priority_tier": "HIGH" if conv>0.3 else "MEDIUM" if conv>0.15 else "LOW"
+            },
+            "farmer_profile": {
+                "persona": seg["persona"], "segment_id": seg["segment_id"],
+                "crop": f.get("_crop","unknown"), "language": f.get("_lang","Hindi"),
+                "harvest_urgency": bool(f.get("harvest_urgency",0)),
+            },
+            "content_brief": brief,
+            "weather_context": {
+                "district": data.get("district","DEFAULT"),
+                "temperature_c": wthr["temperature"], "humidity_pct": wthr["humidity"],
+                "is_raining": bool(wthr["is_raining"]), "disease_pressure": bool(wthr["disease_pressure"]),
+                "receptivity_boost": wthr["receptivity_boost"],
+            },
+            "meta": {"model_version":"3.0","predicted_at":datetime.now().isoformat()}
+        })
+    except Exception as e:
+        return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
 @app.route("/predict/engagement", methods=["POST"])
 def route_engagement():
     try:
-        data = request.get_json()
-        features = build_features_from_request(data)
-        return jsonify(predict_engagement(features))
+        f = build_all_features(request.get_json(force=True))
+        return jsonify({"engagement_probability": round(predict_engagement(f),4)})
     except Exception as e:
-        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
-
+        return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
 @app.route("/predict/channel", methods=["POST"])
 def route_channel():
     try:
-        data = request.get_json()
-        features = build_features_from_request(data)
-        return jsonify(predict_channel(features))
+        return jsonify(predict_channel(build_all_features(request.get_json(force=True))))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
 @app.route("/predict/product", methods=["POST"])
 def route_product():
     try:
-        data = request.get_json()
-        features = build_features_from_request(data)
-        return jsonify(predict_product(features))
+        return jsonify(predict_product(build_all_features(request.get_json(force=True))))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
 @app.route("/predict/conversion", methods=["POST"])
 def route_conversion():
     try:
-        data = request.get_json()
-        features = build_features_from_request(data)
-        return jsonify(predict_conversion(features))
+        f = build_all_features(request.get_json(force=True))
+        prob = predict_conversion(f)
+        return jsonify({"conversion_probability":round(prob,4),"conversion_percent":f"{prob:.1%}",
+                        "priority_tier":"HIGH" if prob>0.3 else "MEDIUM" if prob>0.15 else "LOW"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/predict/full", methods=["POST"])
-def route_full():
-    """
-    Master endpoint — returns all predictions in one shot.
-    
-    Sample request:
-    {
-        "grower_id": "GRW_00001",
-        "state": "Uttar Pradesh",
-        "language": "Hindi",
-        "device_type": "smartphone",
-        "grower_age": 45,
-        "grower_farm_size": 3.5,
-        "product_scan": false,
-        "offline_campaign_attended": true,
-        "grower_crop_calendar": {
-            "crop": "wheat",
-            "sowing": {"start": "2025-11-01"},
-            "harvest": {"start": "2026-03-20"},
-            "stages": [
-                {"stage": "tillering", "approx": "2026-01-15"},
-                {"stage": "flowering", "approx": "2026-02-20"}
-            ]
-        },
-        "campaign_crop": "wheat",
-        "message_sent_date": "2026-01-15"
-    }
-    """
-    try:
-        data = request.get_json()
-        features = build_features_from_request(data)
-
-        engagement = predict_engagement(features)
-        channel_rec = predict_channel(features)
-        product_rec = predict_product(features)
-        conversion = predict_conversion(features)
-        segment = get_segment(features)
-
-        # Content personalization brief
-        content = generate_content_template(
-            features,
-            product=product_rec.get("recommended_product", ""),
-            channel=channel_rec.get("recommended_channel", "WhatsApp"),
-            language=features["language"]
-        )
-
-        # Optimal timing recommendation
-        month = features["message_month"]
-        timing_rec = {
-            "current_month": month,
-            "is_optimal_timing": features["season_phase"] == 1,  # mid-season best
-            "recommended_window": "December–February (peak Rabi growth)",
-            "send_day": "Tuesday or Thursday" if features["message_dow"] in [1, 3]
-                        else "Recommend Tuesday/Thursday"
-        }
-
-        response = {
-            "grower_id": data.get("grower_id", "unknown"),
-            "segment": segment,
-            "predictions": {
-                "engagement": engagement,
-                "channel": channel_rec,
-                "product": product_rec,
-                "conversion": conversion,
-                "timing": timing_rec
-            },
-            "content_brief": content,
-            "campaign_action": {
-                "should_target": conversion["conversion_probability"] > 0.03,
-                "priority": conversion["conversion_tier"],
-                "recommended_channel": channel_rec["recommended_channel"],
-                "recommended_product": product_rec["recommended_product"],
-                "persona": segment["persona"]
-            }
-        }
-        return jsonify(response)
-
-    except Exception as e:
-        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
-
+        return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
 @app.route("/predict/batch", methods=["POST"])
 def route_batch():
-    """
-    Batch scoring — send a list of growers, get ranked campaign list.
-    Body: { "growers": [ {...grower1...}, {...grower2...} ] }
-    Returns growers sorted by conversion priority.
-    """
     try:
-        data = request.get_json()
-        growers_list = data.get("growers", [])
-        if not growers_list:
-            return jsonify({"error": "No growers provided"}), 400
-
+        growers = request.get_json(force=True).get("growers",[])
+        if not growers:
+            return jsonify({"error":"No growers provided"}), 400
         results = []
-        for g in growers_list:
-            features = build_features_from_request(g)
-            conv = predict_conversion(features)
-            channel = predict_channel(features)
-            product = predict_product(features)
-            seg = get_segment(features)
-            results.append({
-                "grower_id": g.get("grower_id", "unknown"),
-                "conversion_probability": conv["conversion_probability"],
-                "priority_score": conv["priority_score"],
-                "recommended_channel": channel["recommended_channel"],
-                "recommended_product": product["recommended_product"],
-                "persona": seg["persona"],
-                "tier": conv["conversion_tier"]
-            })
-
-        # Sort by conversion probability descending
-        results.sort(key=lambda x: x["conversion_probability"], reverse=True)
-        return jsonify({
-            "total": len(results),
-            "ranked_growers": results
-        })
-
+        for g in growers:
+            try:
+                f = build_all_features(g)
+                conv = predict_conversion(f)
+                results.append({
+                    "grower_id": g.get("grower_id","unknown"),
+                    "conversion_probability": round(conv,4),
+                    "priority_tier": "HIGH" if conv>0.3 else "MEDIUM" if conv>0.15 else "LOW",
+                    "recommended_channel": predict_channel(f)["recommended_channel"],
+                    "recommended_product": predict_product(f)["recommended_product"],
+                    "persona": predict_segment(f)["persona"],
+                })
+            except Exception as e:
+                results.append({"grower_id":g.get("grower_id","?"),"error":str(e)})
+        results.sort(key=lambda x: x.get("conversion_probability",0), reverse=True)
+        return jsonify({"total":len(results),"ranked_growers":results,
+                        "summary":{"high_priority":sum(1 for r in results if r.get("priority_tier")=="HIGH"),
+                                   "medium_priority":sum(1 for r in results if r.get("priority_tier")=="MEDIUM"),
+                                   "low_priority":sum(1 for r in results if r.get("priority_tier")=="LOW")}})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/segment", methods=["POST"])
-def route_segment():
-    try:
-        data = request.get_json()
-        features = build_features_from_request(data)
-        return jsonify(get_segment(features))
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
 
 if __name__ == "__main__":
-    print("🌱 Syngenta ML API starting...")
     load_models()
-    print(f"\n  Endpoints:")
-    print(f"    POST /predict/full      ← Main endpoint (use this)")
-    print(f"    POST /predict/batch     ← Batch scoring")
-    print(f"    POST /predict/engagement")
-    print(f"    POST /predict/channel")
-    print(f"    POST /predict/product")
-    print(f"    POST /predict/conversion")
-    print(f"    GET  /health")
-    print(f"    GET  /models/info")
-    print(f"\n  Running on http://0.0.0.0:5000")
+    print("\n  Endpoints:")
+    print("    POST /predict/full       <- Main endpoint")
+    print("    POST /predict/batch      <- Batch scoring")
+    print("    POST /predict/engagement")
+    print("    POST /predict/channel")
+    print("    POST /predict/product")
+    print("    POST /predict/conversion")
+    print("    GET  /health")
+    print("    GET  /models/info")
+    print("\n  Running on http://0.0.0.0:5000\n")
     app.run(host="0.0.0.0", port=5000, debug=False)

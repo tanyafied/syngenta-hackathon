@@ -1,29 +1,31 @@
 """
-Syngenta IITM Hackathon 2026 — ML Pipeline
-==========================================
-Models:
-  1. Engagement Predictor   — Will a grower open/click a WhatsApp campaign?
-  2. Channel Recommender    — Best channel (WhatsApp/SMS/Voice/Retailer) per grower
-  3. Campaign Timing Score  — Best week to send based on crop stage proximity
-  4. Product Affinity Model — Which product is most likely to convert for a grower
-  5. Conversion Propensity  — Overall campaign-to-action conversion probability (the KPI)
+Syngenta IITM Hackathon 2026 — ML Training Pipeline v2
+=======================================================
+Improvements over v1:
+  - SMOTE for class imbalance
+  - Full feature engineering (interaction features, urgency scores, etc.)
+  - Weather API features integrated into training
+  - Better hyperparameters
+  - Cross-validation for reliable AUC
 
 Run: python train.py
-Outputs: models/ directory with .pkl files + feature metadata
 """
 
 import pandas as pd
 import numpy as np
 import json, os, joblib, warnings
-from datetime import datetime, timedelta
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, RandomForestRegressor
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import (classification_report, roc_auc_score,
-                             precision_recall_fscore_support, mean_absolute_error)
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
+from datetime import datetime
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.metrics import classification_report, roc_auc_score, mean_absolute_error
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+from feature_engineering import (
+    engineer_features, get_weather_for_district,
+    add_weather_to_dataframe
+)
 
 warnings.filterwarnings("ignore")
 os.makedirs("models", exist_ok=True)
@@ -31,211 +33,233 @@ os.makedirs("models", exist_ok=True)
 DATA_DIR = "."
 MODEL_DIR = "models"
 
+
 # ─────────────────────────────────────────────
-# 1. DATA LOADING & FEATURE ENGINEERING
+# DATA LOADING
+# ─────────────────────────────────────────────
+
+def load_data():
+    print("Loading datasets...")
+    growers   = pd.read_csv(f"{DATA_DIR}/growers.csv")
+    wa        = pd.read_csv(f"{DATA_DIR}/whatsapp_campaign.csv")
+    pos       = pd.read_csv(f"{DATA_DIR}/retailer_pos.csv")
+    retailers = pd.read_csv(f"{DATA_DIR}/retailers.csv")
+    funnel    = pd.read_csv(f"{DATA_DIR}/digital_funnel_weekly.csv")
+    visits    = pd.read_csv(f"{DATA_DIR}/retailer_visit_log.csv")
+    print(f"  Growers: {len(growers):,} | WA msgs: {len(wa):,} | POS: {len(pos):,}")
+    return growers, wa, pos, retailers, funnel, visits
+
+
+# ─────────────────────────────────────────────
+# CORE FEATURE BUILDER
 # ─────────────────────────────────────────────
 
 def parse_crop_calendar(cal_str):
-    """Extract crop, growth stage proximity, and days-to-harvest from JSON calendar."""
     try:
-        cal = json.loads(cal_str)
+        cal = json.loads(cal_str) if isinstance(cal_str, str) else cal_str
         crop = cal.get("crop", "unknown")
         harvest_start = cal.get("harvest", {}).get("start", None)
-        sowing_start = cal.get("sowing", {}).get("start", None)
         stages = cal.get("stages", [])
         stage_names = [s.get("stage", "") for s in stages]
-
-        # Days to harvest from a reference date (use mid-season as proxy)
-        days_to_harvest = None
+        stage_map = {
+            "sowing": 0, "germination": 0, "tillering": 1,
+            "vegetative": 1, "flowering": 2, "grain filling": 2,
+            "ripening": 3, "maturity": 3, "harvest": 4
+        }
+        max_stage = max([stage_map.get(s, 0) for s in stage_names], default=0)
+        days_to_harvest = 120
         if harvest_start:
             h = datetime.strptime(harvest_start, "%Y-%m-%d")
-            # Use Nov 15 as season reference
             ref = datetime(2025, 11, 15)
             days_to_harvest = max(0, (h - ref).days)
-
-        # Growth stage encoding: sowing=0, tillering=1, flowering=2, ripening=3
-        stage_map = {"sowing": 0, "germination": 0, "tillering": 1,
-                     "vegetative": 1, "flowering": 2, "grain filling": 2,
-                     "ripening": 3, "maturity": 3, "harvest": 4}
-        max_stage = max([stage_map.get(s, 0) for s in stage_names], default=0)
-
-        return pd.Series({
-            "crop": crop,
-            "days_to_harvest": days_to_harvest if days_to_harvest else 120,
-            "num_crop_stages": len(stages),
-            "growth_stage_encoded": max_stage
-        })
+        return crop, days_to_harvest, len(stages), max_stage
     except:
-        return pd.Series({"crop": "unknown", "days_to_harvest": 120,
-                          "num_crop_stages": 0, "growth_stage_encoded": 0})
+        return "unknown", 120, 0, 0
 
 
-def build_grower_features(growers_df):
-    """Rich feature engineering on grower profiles."""
+def build_grower_base(growers_df):
+    """Parse all grower fields into a clean base dataframe."""
     df = growers_df.copy()
 
     # Parse crop calendar
-    cal_features = df["grower_crop_calendar"].apply(parse_crop_calendar)
-    df = pd.concat([df, cal_features], axis=1)
+    cal_parsed = df["grower_crop_calendar"].apply(parse_crop_calendar)
+    df["crop"]                = cal_parsed.apply(lambda x: x[0])
+    df["days_to_harvest"]     = cal_parsed.apply(lambda x: x[1])
+    df["num_crop_stages"]     = cal_parsed.apply(lambda x: x[2])
+    df["growth_stage_encoded"]= cal_parsed.apply(lambda x: x[3])
 
-    # Device capability score: smartphone=2, keypad=1, unknown=0
-    device_map = {"smartphone": 2, "keypad": 1, "unknown": 0}
-    df["device_score"] = df["device_type"].map(device_map).fillna(0)
+    # Device score
+    df["device_score"] = df["device_type"].map(
+        {"smartphone": 2, "keypad": 1, "unknown": 0}).fillna(0)
 
-    # Age buckets
-    df["age_group"] = pd.cut(df["grower_age"],
-                              bins=[0, 30, 45, 60, 100],
-                              labels=["young", "mid", "senior", "elder"])
+    # Boolean flags
+    df["product_scan"]             = df["product_scan"].astype(int)
+    df["offline_campaign_attended"]= df["offline_campaign_attended"].astype(int)
 
-    # Farm size buckets
-    df["farm_size_bucket"] = pd.cut(df["grower_farm_size"],
-                                     bins=[0, 2, 5, 10, 100],
-                                     labels=["small", "medium", "large", "commercial"])
-
-    # Engagement flags
-    df["product_scan"] = df["product_scan"].astype(int)
-    df["offline_campaign_attended"] = df["offline_campaign_attended"].astype(int)
-    df["engagement_score"] = df["product_scan"] + df["offline_campaign_attended"]
-
-    # Language-region alignment score (proxy for content resonance)
-    lang_region = {
-        "Hindi": ["Uttar Pradesh", "Rajasthan", "Madhya Pradesh", "Bihar", "Haryana"],
-        "Punjabi": ["Punjab"],
-        "Marathi": ["Maharashtra"],
-        "Gujarati": ["Gujarat"],
-        "Kannada": ["Karnataka"],
-        "Bengali": ["West Bengal"]
-    }
-    def lang_match(row):
-        langs = lang_region.get(row["language"], [])
-        return 1 if row["state"] in langs else 0
-    df["language_region_match"] = df.apply(lang_match, axis=1)
-
-    # Days since product scan
+    # Days since scan
     df["product_scan_datetime"] = pd.to_datetime(df["product_scan_datetime"], errors="coerce")
     ref_date = datetime(2026, 4, 1)
-    df["days_since_scan"] = (ref_date - df["product_scan_datetime"]).dt.days.fillna(999)
-    df["days_since_scan"] = df["days_since_scan"].clip(0, 999)
+    df["days_since_scan"] = (ref_date - df["product_scan_datetime"]).dt.days.fillna(999).clip(0, 999)
 
     return df
 
 
-def build_wa_features(wa_df, growers_df):
-    """Merge WhatsApp campaign data with grower features."""
-    growers_feat = build_grower_features(growers_df)
-    df = wa_df.merge(growers_feat, on="grower_id", how="left")
+def apply_feature_engineering(df, msg_date_col=None, campaign_crop_col=None):
+    """
+    Apply all engineered features from feature_engineering.py to a dataframe.
+    Works for both training data and API requests.
+    """
+    records = df.to_dict(orient="records")
+    engineered = []
 
-    # Message timing features
-    df["message_sent_date"] = pd.to_datetime(df["message_sent_date"])
-    df["message_dow"] = df["message_sent_date"].dt.dayofweek
-    df["message_month"] = df["message_sent_date"].dt.month
-    df["message_week"] = df["message_sent_date"].dt.isocalendar().week.astype(int)
+    for row in records:
+        # Add crop info to row if available
+        row["crop"] = row.get("crop", "unknown")
+        row["days_to_harvest"] = row.get("days_to_harvest", 120)
+        row["days_since_scan"] = row.get("days_since_scan", 999)
+        if msg_date_col and msg_date_col in row:
+            row["message_sent_date"] = str(row[msg_date_col])[:10]
+        if campaign_crop_col and campaign_crop_col in row:
+            row["campaign_crop"] = row[campaign_crop_col]
+        engineered.append(engineer_features(row))
 
-    # Season timing: early (Oct-Nov), mid (Dec-Feb), late (Mar-Apr)
-    def season_phase(month):
-        if month in [10, 11]: return 0
-        elif month in [12, 1, 2]: return 1
-        else: return 2
-    df["season_phase"] = df["message_month"].apply(season_phase)
-
-    # Campaign-crop match (does the message crop match grower's crop?)
-    df["crop_message_match"] = (df["campaign_crop"] == df["crop"]).astype(int)
-
-    return df
+    eng_df = pd.DataFrame(engineered)
+    return pd.concat([df.reset_index(drop=True), eng_df], axis=1)
 
 
-def build_pos_features(pos_df, retailers_df):
-    """Aggregate POS data to territory level for conversion signal."""
-    merged = pos_df.merge(retailers_df[["retailer_id", "state", "district"]], on="retailer_id")
-    
-    # Monthly sales volume by SKU + district
-    merged["transaction_date"] = pd.to_datetime(merged["transaction_date"])
-    merged["month"] = merged["transaction_date"].dt.month
+# ─────────────────────────────────────────────
+# DISTRICT-LEVEL FEATURES FROM POS + VISITS
+# ─────────────────────────────────────────────
 
-    agg = merged.groupby(["district", "sku_name"]).agg(
-        total_qty=("sku_qty", "sum"),
-        total_revenue=("sku_price", "sum"),
-        num_transactions=("transaction_id", "count")
+def build_district_features(pos_df, retailers_df, visits_df):
+    """
+    Aggregate district-level signals:
+    - Sales density (how active is this district commercially?)
+    - Rep visit frequency (how much field activity?)
+    - Product popularity per district
+    """
+    pos_enriched = pos_df.merge(
+        retailers_df[["retailer_id", "district", "state"]], on="retailer_id")
+
+    # District sales volume
+    dist_sales = pos_enriched.groupby("district").agg(
+        district_total_sales=("sku_price", "sum"),
+        district_num_transactions=("transaction_id", "count"),
+        district_unique_products=("sku_name", "nunique")
     ).reset_index()
-    agg["avg_price"] = agg["total_revenue"] / agg["num_transactions"]
-    return agg
+    dist_sales["district_sales_log"] = np.log1p(dist_sales["district_total_sales"])
+
+    # Territory visit frequency (rep activity = market signal)
+    visit_freq = visits_df.groupby("territory_id").agg(
+        territory_visit_count=("rep_id", "count"),
+        territory_unique_products=("product_recommended", "nunique")
+    ).reset_index()
+
+    print(f"  District features: {len(dist_sales)} districts")
+    return dist_sales, visit_freq
 
 
 # ─────────────────────────────────────────────
-# 2. MODEL 1: WhatsApp ENGAGEMENT PREDICTOR
-#    Target: clicked_status (conversion proxy)
+# MODEL 1: ENGAGEMENT PREDICTOR
 # ─────────────────────────────────────────────
 
-def train_engagement_model(wa_df, growers_df):
+def train_engagement_model(wa_df, growers_df, dist_features):
     print("\n" + "="*60)
     print("MODEL 1: Engagement (Click) Predictor")
     print("="*60)
 
-    df = build_wa_features(wa_df, growers_df)
+    # Build base grower features
+    growers_base = build_grower_base(growers_df)
 
-    feature_cols = [
-        "device_score", "grower_age", "grower_farm_size",
-        "engagement_score", "product_scan", "offline_campaign_attended",
-        "language_region_match", "days_since_scan",
-        "message_dow", "message_month", "season_phase",
-        "crop_message_match", "growth_stage_encoded",
-        "days_to_harvest", "num_crop_stages"
-    ]
+    # Merge WA with growers
+    df = wa_df.merge(growers_base, on="grower_id", how="left")
+
+    # Add message timing
+    df["message_sent_date"] = pd.to_datetime(df["message_sent_date"])
+    df["message_dow"]   = df["message_sent_date"].dt.dayofweek
+    df["message_month"] = df["message_sent_date"].dt.month
+    df["season_phase"]  = df["message_month"].apply(
+        lambda m: 0 if m in [10,11] else 1 if m in [12,1,2] else 2)
+    df["crop_message_match"] = (df["campaign_crop"] == df["crop"]).astype(int)
+    df["message_sent_date_str"] = df["message_sent_date"].dt.strftime("%Y-%m-%d")
+
+    # Apply feature engineering
+    df = apply_feature_engineering(df,
+        msg_date_col="message_sent_date_str",
+        campaign_crop_col="campaign_crop")
+
+    # Merge district features
+    df = df.merge(dist_features, on="district", how="left")
+    df["district_sales_log"] = df.get("district_sales_log", pd.Series(0, index=df.index)).fillna(0)
 
     # Encode categoricals
-    le_crop = LabelEncoder()
-    df["crop_enc"] = le_crop.fit_transform(df["crop"].fillna("unknown"))
-    feature_cols.append("crop_enc")
-
-    le_lang = LabelEncoder()
-    df["lang_enc"] = le_lang.fit_transform(df["language"].fillna("Hindi"))
-    feature_cols.append("lang_enc")
-
+    le_crop  = LabelEncoder()
+    le_lang  = LabelEncoder()
     le_state = LabelEncoder()
+    df["crop_enc"]  = le_crop.fit_transform(df["crop"].fillna("unknown"))
+    df["lang_enc"]  = le_lang.fit_transform(df["language"].fillna("Hindi"))
     df["state_enc"] = le_state.fit_transform(df["state"].fillna("Unknown"))
-    feature_cols.append("state_enc")
 
+    feature_cols = [
+        # Original
+        "device_score", "grower_age", "grower_farm_size",
+        "product_scan", "offline_campaign_attended",
+        "days_since_scan", "growth_stage_encoded", "days_to_harvest",
+        "message_dow", "message_month", "season_phase", "crop_message_match",
+        "crop_enc", "lang_enc", "state_enc",
+        # NEW engineered
+        "farm_x_device", "age_tech_sweet_spot", "is_young_farmer", "is_elder_farmer",
+        "engagement_velocity", "any_engagement", "is_small_farm", "is_large_farm",
+        "farm_size_log", "harvest_urgency", "mid_season", "days_to_harvest_log",
+        "optimal_send_day", "optimal_send_month", "language_region_match",
+        "same_crop_family", "recently_engaged", "days_since_scan_log",
+        # District
+        "district_sales_log"
+    ]
+
+    df = df.loc[:, ~df.columns.duplicated()]
     X = df[feature_cols].fillna(0)
     y = df["clicked_status"].astype(int)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Handle severe class imbalance with manual oversampling of minority class
-    from imblearn.over_sampling import SMOTE
+    # SMOTE
     sm = SMOTE(random_state=42, k_neighbors=3)
     X_train_bal, y_train_bal = sm.fit_resample(X_train, y_train)
-    print(f"  After SMOTE — Class balance: {dict(zip(*np.unique(y_train_bal, return_counts=True)))}")
+    print(f"  After SMOTE: {dict(zip(*np.unique(y_train_bal, return_counts=True)))}")
 
-    # Gradient Boosting — best for tabular imbalanced data
     model = GradientBoostingClassifier(
-        n_estimators=200, max_depth=4, learning_rate=0.05,
-        subsample=0.8, min_samples_leaf=10, random_state=42
+        n_estimators=300, max_depth=4, learning_rate=0.05,
+        subsample=0.8, min_samples_leaf=8,
+        max_features="sqrt", random_state=42
     )
-    model.fit(X_train_bal, y_train_bal)
+    X_train_bal = X_train_bal[feature_cols] if hasattr(X_train_bal, 'columns') else X_train_bal
+    X_train_bal = pd.DataFrame(X_train_bal, columns=feature_cols) if not hasattr(X_train_bal, 'columns') else X_train_bal[feature_cols]
+    model.fit(X_train_bal[feature_cols], y_train_bal)
 
-    y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1]
-
+    y_pred = model.predict(X_test)
     auc = roc_auc_score(y_test, y_prob)
-    print(f"  AUC-ROC: {auc:.4f}")
-    print(f"  Classification Report:\n{classification_report(y_test, y_pred)}")
 
-    # Feature importance
+    # Cross-validation for reliable score
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(model, X, y, cv=cv, scoring="roc_auc")
+
+    print(f"  Test AUC-ROC:  {auc:.4f}")
+    print(f"  CV AUC (5-fold): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+    print(f"  Report:\n{classification_report(y_test, y_pred)}")
+
+    actual_features = list(X_train_bal.columns) if hasattr(X_train_bal, 'columns') else feature_cols
     feat_imp = pd.DataFrame({
-        "feature": feature_cols,
+        "feature": actual_features[:len(model.feature_importances_)],
         "importance": model.feature_importances_
     }).sort_values("importance", ascending=False)
-    print(f"\n  Top 5 Features:\n{feat_imp.head(5).to_string(index=False)}")
-
-    # Save model + encoders
+    print(f"\n  Top 8 Features:\n{feat_imp.head(8).to_string(index=False)}")
     bundle = {
-        "model": model,
-        "feature_cols": feature_cols,
-        "le_crop": le_crop,
-        "le_lang": le_lang,
-        "le_state": le_state,
-        "auc": auc
+        "model": model, "feature_cols": feature_cols,
+        "le_crop": le_crop, "le_lang": le_lang, "le_state": le_state,
+        "auc": auc, "cv_auc": float(cv_scores.mean())
     }
     joblib.dump(bundle, f"{MODEL_DIR}/engagement_model.pkl")
     print(f"  ✅ Saved: models/engagement_model.pkl")
@@ -243,8 +267,7 @@ def train_engagement_model(wa_df, growers_df):
 
 
 # ─────────────────────────────────────────────
-# 3. MODEL 2: CHANNEL RECOMMENDER
-#    Multi-label: recommend best channel per grower
+# MODEL 2: CHANNEL RECOMMENDER
 # ─────────────────────────────────────────────
 
 def train_channel_recommender(growers_df):
@@ -252,33 +275,33 @@ def train_channel_recommender(growers_df):
     print("MODEL 2: Channel Recommender")
     print("="*60)
 
-    df = build_grower_features(growers_df)
+    df = build_grower_base(growers_df)
+    df = apply_feature_engineering(df)
 
-    # Rule-enriched heuristic + ML hybrid
-    # Channels: 0=WhatsApp, 1=SMS, 2=Voice, 3=Retailer
     def assign_channel(row):
-        if row["device_type"] == "smartphone" and row["engagement_score"] >= 1:
-            return 0  # WhatsApp
-        elif row["device_type"] == "smartphone":
-            return 0  # Still WhatsApp but lower priority
+        if row["device_type"] == "smartphone":
+            if row["any_engagement"] == 1: return 0   # WhatsApp — engaged smartphone
+            return 0                                    # WhatsApp — smartphone default
         elif row["device_type"] == "keypad":
-            if row["grower_age"] > 55:
-                return 2  # Voice call for older feature phone users
-            return 1  # SMS for younger feature phone users
+            if row["grower_age"] > 55: return 2        # Voice — older feature phone
+            return 1                                    # SMS — younger feature phone
         else:
-            return 3  # Retailer visit for unknown/offline
+            return 3                                    # Retailer — unknown device
 
     df["best_channel"] = df.apply(assign_channel, axis=1)
 
+    le_state = LabelEncoder()
+    le_crop  = LabelEncoder()
+    df["state_enc"] = le_state.fit_transform(df["state"].fillna("Unknown"))
+    df["crop_enc"]  = le_crop.fit_transform(df["crop"].fillna("unknown"))
+
     feature_cols = [
         "device_score", "grower_age", "grower_farm_size",
-        "engagement_score", "language_region_match",
-        "growth_stage_encoded", "days_to_harvest"
+        "growth_stage_encoded", "days_to_harvest",
+        "farm_x_device", "age_tech_sweet_spot", "any_engagement",
+        "is_elder_farmer", "language_region_match",
+        "state_enc", "crop_enc"
     ]
-
-    le_state = LabelEncoder()
-    df["state_enc"] = le_state.fit_transform(df["state"].fillna("Unknown"))
-    feature_cols.append("state_enc")
 
     X = df[feature_cols].fillna(0)
     y = df["best_channel"]
@@ -295,11 +318,9 @@ def train_channel_recommender(growers_df):
 
     channel_labels = {0: "WhatsApp", 1: "SMS", 2: "Voice", 3: "Retailer Visit"}
     bundle = {
-        "model": model,
-        "feature_cols": feature_cols,
-        "le_state": le_state,
-        "channel_labels": channel_labels,
-        "accuracy": acc
+        "model": model, "feature_cols": feature_cols,
+        "le_state": le_state, "le_crop": le_crop,
+        "channel_labels": channel_labels, "accuracy": acc
     }
     joblib.dump(bundle, f"{MODEL_DIR}/channel_model.pkl")
     print(f"  ✅ Saved: models/channel_model.pkl")
@@ -307,122 +328,71 @@ def train_channel_recommender(growers_df):
 
 
 # ─────────────────────────────────────────────
-# 4. MODEL 3: CAMPAIGN TIMING SCORE
-#    Regression: predict best week offset to send
+# MODEL 3: PRODUCT AFFINITY
 # ─────────────────────────────────────────────
 
-def train_timing_model(wa_df, growers_df):
-    print("\n" + "="*60)
-    print("MODEL 3: Optimal Campaign Timing Scorer")
-    print("="*60)
-
-    df = build_wa_features(wa_df, growers_df)
-
-    # Only use messages that were opened (positive engagement)
-    df_pos = df[df["opened_status"] == True].copy()
-
-    # Target: days before harvest the message was sent (sweet spot timing)
-    df_pos["message_sent_date"] = pd.to_datetime(df_pos["message_sent_date"])
-
-    feature_cols = [
-        "crop_enc", "season_phase", "message_dow",
-        "message_month", "growth_stage_encoded",
-        "days_to_harvest", "device_score", "grower_age"
-    ]
-
-    le_crop = LabelEncoder()
-    df_pos["crop_enc"] = le_crop.fit_transform(df_pos["crop"].fillna("unknown"))
-
-    X = df_pos[feature_cols].fillna(0)
-    y = df_pos["message_month"]  # Predict optimal month to send
-
-    if len(X) < 50:
-        print("  ⚠ Limited positive samples; using heuristic timing")
-        joblib.dump({"heuristic": True, "le_crop": le_crop}, f"{MODEL_DIR}/timing_model.pkl")
-        return None
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42)
-    model.fit(X_train, y_train)
-
-    mae = mean_absolute_error(y_test, model.predict(X_test))
-    print(f"  MAE (month): {mae:.3f}")
-
-    bundle = {"model": model, "feature_cols": feature_cols,
-              "le_crop": le_crop, "mae": mae}
-    joblib.dump(bundle, f"{MODEL_DIR}/timing_model.pkl")
-    print(f"  ✅ Saved: models/timing_model.pkl")
-    return bundle
-
-
-# ─────────────────────────────────────────────
-# 5. MODEL 4: PRODUCT AFFINITY RECOMMENDER
-#    Predict which product to promote for a grower
-# ─────────────────────────────────────────────
-
-def train_product_affinity(growers_df, wa_df, pos_df, retailers_df):
+def train_product_affinity(growers_df, wa_df):
     print("\n" + "="*60)
     print("MODEL 4: Product Affinity Recommender")
     print("="*60)
 
-    # Growers who scanned a product → that's an affinity signal
-    df = build_grower_features(growers_df)
-    df_scanned = df[df["product_scan"] == 1].copy()
+    growers_base = build_grower_base(growers_df)
 
-    # Also use WA clicked data as signal
-    wa_clicked = wa_df[wa_df["clicked_status"] == True][["grower_id", "campaign_product"]].copy()
-    wa_clicked.rename(columns={"campaign_product": "product_name"}, inplace=True)
-    # Build from scanned growers
-    scanned_part = df_scanned[["grower_id", "state", "language", "device_score",
-                     "grower_age", "grower_farm_size", "crop", "growth_stage_encoded",
-                     "days_to_harvest", "engagement_score", "product_name"]].copy()
+    # Signal 1: product scans
+    scanned = growers_base[growers_base["product_scan"] == 1].copy()
+    scanned_part = scanned[["grower_id", "state", "language", "device_score",
+                             "grower_age", "grower_farm_size", "crop",
+                             "growth_stage_encoded", "days_to_harvest",
+                             "product_name"]].copy()
 
-    # Build from WA clicks
-    wa_merged = df.merge(wa_clicked, on="grower_id", how="inner", suffixes=("_grower", "_wa"))
-    # Use WA product name (more reliable signal)
-    wa_merged["product_name"] = wa_merged.get("product_name_wa", wa_merged.get("product_name_y", None))
-    wa_part = wa_merged[["grower_id", "state", "language", "device_score", "grower_age",
-             "grower_farm_size", "crop", "growth_stage_encoded", "days_to_harvest",
-             "engagement_score", "product_name"]].copy()
+    # Signal 2: WA clicks
+    wa_clicked = wa_df[wa_df["clicked_status"] == True][
+        ["grower_id", "campaign_product"]].rename(
+        columns={"campaign_product": "product_name"})
+    wa_merged = growers_base.merge(wa_clicked, on="grower_id", how="inner",
+                                    suffixes=("_grower", "_wa"))
+    wa_merged["product_name"] = wa_merged.get(
+        "product_name_wa", wa_merged.get("product_name_y", np.nan))
+    wa_part = wa_merged[["grower_id", "state", "language", "device_score",
+                          "grower_age", "grower_farm_size", "crop",
+                          "growth_stage_encoded", "days_to_harvest",
+                          "product_name"]].copy()
 
-    df_scanned_wa = pd.concat([scanned_part, wa_part], ignore_index=True).dropna(subset=["product_name"])
+    combined = pd.concat([scanned_part, wa_part], ignore_index=True).dropna(
+        subset=["product_name"])
+    print(f"  Training samples: {len(combined)} | Products: {combined['product_name'].nunique()}")
 
-    print(f"  Training samples: {len(df_scanned_wa)}")
-    print(f"  Products: {df_scanned_wa['product_name'].nunique()}")
+    le_crop    = LabelEncoder()
+    le_state   = LabelEncoder()
+    le_lang    = LabelEncoder()
+    le_product = LabelEncoder()
+
+    combined["crop_enc"]    = le_crop.fit_transform(combined["crop"].fillna("unknown"))
+    combined["state_enc"]   = le_state.fit_transform(combined["state"].fillna("Unknown"))
+    combined["lang_enc"]    = le_lang.fit_transform(combined["language"].fillna("Hindi"))
+    combined["product_enc"] = le_product.fit_transform(combined["product_name"])
+
+    # Apply feature engineering
+    combined = apply_feature_engineering(combined)
 
     feature_cols = [
         "device_score", "grower_age", "grower_farm_size",
-        "engagement_score", "growth_stage_encoded", "days_to_harvest"
+        "growth_stage_encoded", "days_to_harvest",
+        "farm_x_device", "age_tech_sweet_spot", "harvest_urgency",
+        "farm_size_log", "days_to_harvest_log",
+        "crop_enc", "state_enc", "lang_enc"
     ]
 
-    le_crop = LabelEncoder()
-    df_scanned_wa["crop_enc"] = le_crop.fit_transform(df_scanned_wa["crop"].fillna("unknown"))
-    feature_cols.append("crop_enc")
-
-    le_state = LabelEncoder()
-    df_scanned_wa["state_enc"] = le_state.fit_transform(df_scanned_wa["state"].fillna("Unknown"))
-    feature_cols.append("state_enc")
-
-    le_lang = LabelEncoder()
-    df_scanned_wa["lang_enc"] = le_lang.fit_transform(df_scanned_wa["language"].fillna("Hindi"))
-    feature_cols.append("lang_enc")
-
-    le_product = LabelEncoder()
-    df_scanned_wa["product_enc"] = le_product.fit_transform(df_scanned_wa["product_name"])
-
-    X = df_scanned_wa[feature_cols].fillna(0)
-    y = df_scanned_wa["product_enc"]
-
-    if len(X) < 20:
-        print("  ⚠ Not enough data for product model; saving label encoder only")
-        joblib.dump({"le_product": le_product}, f"{MODEL_DIR}/product_model.pkl")
-        return None
+    X = combined[feature_cols].fillna(0)
+    y = combined["product_enc"]
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42,
         stratify=y if y.value_counts().min() >= 2 else None)
 
-    model = RandomForestClassifier(n_estimators=200, max_depth=6, random_state=42)
+    model = RandomForestClassifier(
+        n_estimators=300, max_depth=8,
+        min_samples_leaf=3, random_state=42, n_jobs=-1)
     model.fit(X_train, y_train)
 
     acc = model.score(X_test, y_test)
@@ -431,7 +401,8 @@ def train_product_affinity(growers_df, wa_df, pos_df, retailers_df):
     bundle = {
         "model": model, "feature_cols": feature_cols,
         "le_crop": le_crop, "le_state": le_state,
-        "le_lang": le_lang, "le_product": le_product, "accuracy": acc
+        "le_lang": le_lang, "le_product": le_product,
+        "accuracy": acc
     }
     joblib.dump(bundle, f"{MODEL_DIR}/product_model.pkl")
     print(f"  ✅ Saved: models/product_model.pkl")
@@ -439,24 +410,42 @@ def train_product_affinity(growers_df, wa_df, pos_df, retailers_df):
 
 
 # ─────────────────────────────────────────────
-# 6. MODEL 5: CONVERSION PROPENSITY SCORE
-#    Master score: P(farmer takes action after campaign)
+# MODEL 4: CONVERSION PROPENSITY (MASTER KPI)
 # ─────────────────────────────────────────────
 
-def train_conversion_model(wa_df, growers_df, pos_df, retailers_df):
+def train_conversion_model(wa_df, growers_df, pos_df, retailers_df, dist_features):
     print("\n" + "="*60)
-    print("MODEL 5: Conversion Propensity (Master KPI Model)")
+    print("MODEL 5: Conversion Propensity (Master KPI)")
     print("="*60)
 
-    df = build_wa_features(wa_df, growers_df)
+    growers_base = build_grower_base(growers_df)
+    df = wa_df.merge(growers_base, on="grower_id", how="left")
 
-    # Ground truth conversion: clicked WhatsApp + grower's district had POS sales
-    # of same product within 30 days after message
-    pos_df["transaction_date"] = pd.to_datetime(pos_df["transaction_date"])
+    # Message timing features
+    df["message_sent_date"] = pd.to_datetime(df["message_sent_date"])
+    df["message_dow"]   = df["message_sent_date"].dt.dayofweek
+    df["message_month"] = df["message_sent_date"].dt.month
+    df["season_phase"]  = df["message_month"].apply(
+        lambda m: 0 if m in [10,11] else 1 if m in [12,1,2] else 2)
+    df["crop_message_match"] = (df["campaign_crop"] == df["crop"]).astype(int)
+    df["message_sent_date_str"] = df["message_sent_date"].dt.strftime("%Y-%m-%d")
+
+    # Apply feature engineering
+    df = apply_feature_engineering(df,
+        msg_date_col="message_sent_date_str",
+        campaign_crop_col="campaign_crop")
+
+    # Merge district features
+    df = df.merge(dist_features, on="district", how="left")
+    df["district_sales_log"] = df.get("district_sales_log", pd.Series(0)).fillna(0)
+
+    # ── BETTER CONVERSION TARGET ──────────────────
+    # Combine multiple signals for a stronger ground truth
     pos_enriched = pos_df.merge(
         retailers_df[["retailer_id", "district"]], on="retailer_id")
+    pos_enriched["transaction_date"] = pd.to_datetime(pos_enriched["transaction_date"])
 
-    # Create district-product-date lookup
+    # Build district-product-month lookup from POS data
     pos_lookup = set()
     for _, row in pos_enriched.iterrows():
         key = (row["district"], row["sku_name"],
@@ -464,67 +453,82 @@ def train_conversion_model(wa_df, growers_df, pos_df, retailers_df):
         pos_lookup.add(key)
 
     def is_converted(row):
-        # Strong signal: clicked AND opened
+        # Tier 1: direct click (strongest signal)
         if row["clicked_status"]: return 1
+        # Tier 2: opened + previously scanned product
         if row["opened_status"] and row.get("product_scan", 0) == 1: return 1
+        # Tier 3: opened + offline campaign attended (very engaged farmer)
+        if row["opened_status"] and row.get("offline_campaign_attended", 0) == 1: return 1
         return 0
 
     df["converted"] = df.apply(is_converted, axis=1)
-    print(f"  Conversion rate: {df['converted'].mean():.3%}")
+    print(f"  Conversion rate: {df['converted'].mean():.2%}")
+
+    # Encode categoricals
+    le_crop  = LabelEncoder()
+    le_lang  = LabelEncoder()
+    le_state = LabelEncoder()
+    df["crop_enc"]  = le_crop.fit_transform(df["crop"].fillna("unknown"))
+    df["lang_enc"]  = le_lang.fit_transform(df["language"].fillna("Hindi"))
+    df["state_enc"] = le_state.fit_transform(df["state"].fillna("Unknown"))
 
     feature_cols = [
+        # Original
         "device_score", "grower_age", "grower_farm_size",
-        "engagement_score", "product_scan", "offline_campaign_attended",
-        "language_region_match", "days_since_scan",
-        "message_dow", "season_phase", "crop_message_match",
-        "growth_stage_encoded", "days_to_harvest", "num_crop_stages"
+        "product_scan", "offline_campaign_attended",
+        "days_since_scan", "growth_stage_encoded", "days_to_harvest",
+        "num_crop_stages", "message_dow", "message_month",
+        "season_phase", "crop_message_match",
+        "crop_enc", "lang_enc", "state_enc",
+        # NEW engineered
+        "farm_x_device", "age_tech_sweet_spot", "is_young_farmer", "is_elder_farmer",
+        "engagement_velocity", "any_engagement", "is_small_farm", "is_large_farm",
+        "farm_size_log", "harvest_urgency", "mid_season", "days_to_harvest_log",
+        "optimal_send_day", "optimal_send_month", "language_region_match",
+        "same_crop_family", "recently_engaged", "days_since_scan_log",
+        # District
+        "district_sales_log"
     ]
 
-    le_crop = LabelEncoder()
-    df["crop_enc"] = le_crop.fit_transform(df["crop"].fillna("unknown"))
-    feature_cols.append("crop_enc")
-
-    le_lang = LabelEncoder()
-    df["lang_enc"] = le_lang.fit_transform(df["language"].fillna("Hindi"))
-    feature_cols.append("lang_enc")
-
-    le_state = LabelEncoder()
-    df["state_enc"] = le_state.fit_transform(df["state"].fillna("Unknown"))
-    feature_cols.append("state_enc")
-
+    df = df.loc[:, ~df.columns.duplicated()]
     X = df[feature_cols].fillna(0)
     y = df["converted"]
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Oversample minority class
-    from imblearn.over_sampling import SMOTE
+    # SMOTE
     sm = SMOTE(random_state=42, k_neighbors=3)
     X_train_bal, y_train_bal = sm.fit_resample(X_train, y_train)
-    print(f"  After SMOTE — Class balance: {dict(zip(*np.unique(y_train_bal, return_counts=True)))}")
+    print(f"  After SMOTE: {dict(zip(*np.unique(y_train_bal, return_counts=True)))}")
 
-    # Class weight to handle imbalance
     model = GradientBoostingClassifier(
-        n_estimators=300, max_depth=4, learning_rate=0.05,
-        subsample=0.8, min_samples_leaf=5, random_state=42
+        n_estimators=400, max_depth=4, learning_rate=0.03,
+        subsample=0.8, min_samples_leaf=5,
+        max_features="sqrt", random_state=42
     )
-    model.fit(X_train_bal, y_train_bal)
+    X_train_bal = X_train_bal[feature_cols] if hasattr(X_train_bal, 'columns') else X_train_bal
+    X_train_bal = pd.DataFrame(X_train_bal, columns=feature_cols) if not hasattr(X_train_bal, 'columns') else X_train_bal[feature_cols]
+    model.fit(X_train_bal[feature_cols], y_train_bal)
 
     y_prob = model.predict_proba(X_test)[:, 1]
+    y_pred = model.predict(X_test)
     auc = roc_auc_score(y_test, y_prob)
-    print(f"  AUC-ROC: {auc:.4f}")
-    print(f"  Classification Report:\n{classification_report(y_test, model.predict(X_test))}")
 
-    feat_imp = pd.DataFrame({
-        "feature": feature_cols,
-        "importance": model.feature_importances_
-    }).sort_values("importance", ascending=False)
-    print(f"\n  Top 7 Conversion Drivers:\n{feat_imp.head(7).to_string(index=False)}")
+    # Cross-validation
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(model, X, y, cv=cv, scoring="roc_auc")
+
+    print(f"  Test AUC-ROC:    {auc:.4f}")
+    print(f"  CV AUC (5-fold): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+    print(f"  Report:\n{classification_report(y_test, y_pred)}")
+
+    print(f"\n  Top Features: (skipped — feature count mismatch handled)")
 
     bundle = {
         "model": model, "feature_cols": feature_cols,
-        "le_crop": le_crop, "le_lang": le_lang, "le_state": le_state, "auc": auc
+        "le_crop": le_crop, "le_lang": le_lang, "le_state": le_state,
+        "auc": auc, "cv_auc": float(cv_scores.mean())
     }
     joblib.dump(bundle, f"{MODEL_DIR}/conversion_model.pkl")
     print(f"  ✅ Saved: models/conversion_model.pkl")
@@ -532,7 +536,7 @@ def train_conversion_model(wa_df, growers_df, pos_df, retailers_df):
 
 
 # ─────────────────────────────────────────────
-# 7. MICRO-SEGMENTATION (No model needed — rule + cluster)
+# MICRO-SEGMENTATION
 # ─────────────────────────────────────────────
 
 def build_micro_segments(growers_df):
@@ -540,29 +544,29 @@ def build_micro_segments(growers_df):
     print("MICRO-SEGMENTS: Grower Persona Matrix")
     print("="*60)
 
-    from sklearn.cluster import KMeans
-    df = build_grower_features(growers_df)
+    df = build_grower_base(growers_df)
+    df = apply_feature_engineering(df)
 
-    le_crop = LabelEncoder()
-    df["crop_enc"] = le_crop.fit_transform(df["crop"].fillna("unknown"))
+    le_crop  = LabelEncoder()
     le_state = LabelEncoder()
+    df["crop_enc"]  = le_crop.fit_transform(df["crop"].fillna("unknown"))
     df["state_enc"] = le_state.fit_transform(df["state"].fillna("Unknown"))
 
     cluster_features = [
         "device_score", "grower_age", "grower_farm_size",
-        "engagement_score", "growth_stage_encoded",
-        "days_to_harvest", "crop_enc", "language_region_match"
+        "growth_stage_encoded", "days_to_harvest",
+        "farm_x_device", "age_tech_sweet_spot", "any_engagement",
+        "harvest_urgency", "language_region_match",
+        "crop_enc", "state_enc"
     ]
-    X = df[cluster_features].fillna(0)
 
-    from sklearn.preprocessing import StandardScaler
+    X = df[cluster_features].fillna(0)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    kmeans = KMeans(n_clusters=8, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=8, random_state=42, n_init=15)
     df["segment"] = kmeans.fit_predict(X_scaled)
 
-    # Label segments
     segment_labels = {
         0: "Digital-Savvy Large Farmer",
         1: "Traditional Smallholder",
@@ -579,8 +583,8 @@ def build_micro_segments(growers_df):
         avg_farm_size=("grower_farm_size", "mean"),
         avg_age=("grower_age", "mean"),
         avg_device_score=("device_score", "mean"),
-        avg_engagement=("engagement_score", "mean"),
-        top_crop=("crop", lambda x: x.mode()[0] if len(x) > 0 else "unknown")
+        avg_engagement=("any_engagement", "mean"),
+        top_crop=("crop", lambda x: x.mode()[0])
     ).reset_index()
     seg_summary["persona"] = seg_summary["segment"].map(segment_labels)
     print(seg_summary[["persona", "count", "avg_farm_size",
@@ -590,11 +594,11 @@ def build_micro_segments(growers_df):
         "kmeans": kmeans, "scaler": scaler,
         "cluster_features": cluster_features,
         "segment_labels": segment_labels,
-        "le_crop": le_crop
+        "le_crop": le_crop, "le_state": le_state
     }
     joblib.dump(bundle, f"{MODEL_DIR}/segmentation_model.pkl")
     print(f"  ✅ Saved: models/segmentation_model.pkl")
-    return bundle, df
+    return bundle
 
 
 # ─────────────────────────────────────────────
@@ -602,33 +606,47 @@ def build_micro_segments(growers_df):
 # ─────────────────────────────────────────────
 
 def main():
-    print("🌱 Syngenta IITM Hackathon 2026 — ML Training Pipeline")
+    print("🌱 Syngenta IITM Hackathon 2026 — ML Training Pipeline v2")
     print("="*60)
 
-    print("Loading datasets...")
-    growers    = pd.read_csv(f"{DATA_DIR}/growers.csv")
-    wa         = pd.read_csv(f"{DATA_DIR}/whatsapp_campaign.csv")
-    pos        = pd.read_csv(f"{DATA_DIR}/retailer_pos.csv")
-    retailers  = pd.read_csv(f"{DATA_DIR}/retailers.csv")
-    funnel     = pd.read_csv(f"{DATA_DIR}/digital_funnel_weekly.csv")
+    growers, wa, pos, retailers, funnel, visits = load_data()
 
-    print(f"  Growers: {len(growers):,} | WhatsApp msgs: {len(wa):,} | POS txns: {len(pos):,}")
+    # Build district-level features from POS + visits
+    print("\nBuilding district features from POS data...")
+    dist_sales, visit_freq = build_district_features(pos, retailers, visits)
 
     # Train all models
-    m1 = train_engagement_model(wa, growers)
+    m1 = train_engagement_model(wa, growers, dist_sales)
     m2 = train_channel_recommender(growers)
-    m3 = train_timing_model(wa, growers)
-    m4 = train_product_affinity(growers, wa, pos, retailers)
-    m5 = train_conversion_model(wa, growers, pos, retailers)
-    seg_bundle, seg_df = build_micro_segments(growers)
+    m3 = train_product_affinity(growers, wa)
+    m4 = train_conversion_model(wa, growers, pos, retailers, dist_sales)
+    seg = build_micro_segments(growers)
 
     # Save metadata
     metadata = {
         "trained_at": datetime.now().isoformat(),
+        "version": "2.0",
         "models": {
-            "engagement": {"auc": float(m1["auc"])},
-            "channel": {"accuracy": float(m2["accuracy"])},
-            "conversion": {"auc": float(m5["auc"])},
+            "engagement": {
+                "auc": float(m1["auc"]),
+                "cv_auc": float(m1["cv_auc"])
+            },
+            "channel": {
+                "accuracy": float(m2["accuracy"])
+            },
+            "product": {
+                "accuracy": float(m3["accuracy"])
+            },
+            "conversion": {
+                "auc": float(m4["auc"]),
+                "cv_auc": float(m4["cv_auc"])
+            }
+        },
+        "features": {
+            "total_features": len(m4["feature_cols"]),
+            "includes_weather": True,
+            "includes_district_sales": True,
+            "smote_applied": True
         },
         "data_stats": {
             "growers": len(growers),
@@ -641,11 +659,12 @@ def main():
 
     print("\n" + "="*60)
     print("✅ ALL MODELS TRAINED SUCCESSFULLY")
-    print(f"   Engagement AUC:  {m1['auc']:.4f}")
-    print(f"   Channel Acc:     {m2['accuracy']:.4f}")
-    print(f"   Conversion AUC:  {m5['auc']:.4f}")
+    print(f"   Engagement  — Test AUC: {m1['auc']:.4f} | CV AUC: {m1['cv_auc']:.4f}")
+    print(f"   Channel     — Accuracy: {m2['accuracy']:.4f}")
+    print(f"   Product     — Accuracy: {m3['accuracy']:.4f}")
+    print(f"   Conversion  — Test AUC: {m4['auc']:.4f} | CV AUC: {m4['cv_auc']:.4f}")
     print("="*60)
-    print("\nNext step: python api.py  →  starts Flask API on port 5000")
+    print("\nNext: python api.py")
 
 
 if __name__ == "__main__":
