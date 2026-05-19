@@ -6,6 +6,7 @@ Built around exact feature lists from trained models.
 Run: python api.py
 """
 
+from content_generator import generate_content, generate_all_variants
 import json, os, joblib, traceback
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from train import parse_crop_calendar
 
 app = Flask(__name__)
 MODEL_DIR = "models"
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODELS = {}
 
 # ─────────────────────────────────────────────
@@ -453,6 +455,229 @@ def route_batch():
     except Exception as e:
         return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
+"""
+ADD THESE TO YOUR api.py
+=========================
+Step 1: Add this import at the top of api.py (after existing imports):
+    from content_generator import generate_content, generate_all_variants
+
+Step 2: Add this line near the top where you load models:
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+Step 3: Paste the two routes below into api.py
+        (before the  if __name__ == "__main__":  line at the bottom)
+"""
+
+# ─────────────────────────────────────────────
+# ROUTE: GENERATE CONTENT FOR ONE FARMER
+# ─────────────────────────────────────────────
+
+@app.route("/generate/content", methods=["POST"])
+def route_generate_content():
+    """
+    Generate a personalized vernacular marketing message for one farmer.
+
+    Request body:
+    {
+        "grower_id": "GRW_00001",
+        "state": "Uttar Pradesh",
+        "district": "Kanpur Nagar",
+        "language": "Hindi",
+        "device_type": "smartphone",
+        "grower_age": 45,
+        "grower_farm_size": 3.5,
+        "grower_crop_calendar": {
+            "crop": "wheat",
+            "harvest": {"start": "2026-03-20"},
+            "stages": [{"stage": "tillering"}]
+        },
+        "campaign_crop": "wheat",
+        "channel": "WhatsApp"          <- optional, defaults to WhatsApp
+    }
+
+    Response:
+    {
+        "success": true,
+        "content": "नमस्ते किसान भाई! 🌾 ...",
+        "language": "Hindi",
+        "channel": "WhatsApp",
+        "crop": "wheat",
+        "product": "Topik 15 WP",
+        "char_count": 187
+    }
+    """
+    try:
+        if not ANTHROPIC_API_KEY:
+            return jsonify({
+                "success": False,
+                "error": "ANTHROPIC_API_KEY not set. Run: $env:ANTHROPIC_API_KEY='sk-ant-...'"
+            }), 500
+
+        data     = request.get_json()
+        features = build_request_features(data)
+        channel  = data.get("channel", "WhatsApp")
+
+        # Get ML predictions to enrich the content
+        product_rec = predict_product(features)
+        segment     = get_segment(features)
+        content_b   = generate_content_brief(
+            features,
+            product  = product_rec.get("recommended_product", ""),
+            channel  = channel,
+            language = features.get("language", "Hindi")
+        )
+
+        # Build farmer dict for content generator
+        farmer = {
+            "grower_id":           data.get("grower_id", "unknown"),
+            "crop":                features.get("crop", "wheat"),
+            "language":            features.get("language", "Hindi"),
+            "district":            features.get("district", "your district"),
+            "state":               features.get("state", ""),
+            "growth_stage":        content_b.get("growth_stage", "tillering"),
+            "persona":             segment.get("persona", "farmer"),
+            "recommended_product": product_rec.get("recommended_product", ""),
+            "device_score":        features.get("device_score", 2),
+            "grower_age":          features.get("grower_age", 40),
+            "grower_farm_size":    features.get("grower_farm_size", 2.0),
+            "temperature":         features.get("temperature", 25),
+            "is_raining":          features.get("is_raining", 0),
+            "disease_pressure":    features.get("disease_pressure", 0),
+            "harvest_urgency":     features.get("harvest_urgency", 0),
+        }
+
+        result = generate_content(farmer, channel, ANTHROPIC_API_KEY)
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e),
+                        "trace": traceback.format_exc()}), 500
+
+
+# ─────────────────────────────────────────────
+# ROUTE: FULL PREDICTION + CONTENT IN ONE CALL
+# ─────────────────────────────────────────────
+
+@app.route("/generate/full_campaign", methods=["POST"])
+def route_full_campaign():
+    """
+    The ULTIMATE endpoint — ML predictions + generated content in one shot.
+    This is what your frontend should call for the demo.
+
+    Returns everything:
+    - Segment / persona
+    - Live weather
+    - Channel recommendation
+    - Product recommendation
+    - Conversion probability
+    - ACTUAL generated WhatsApp message in farmer's language
+    - SMS backup
+    - Content brief
+
+    Request body: same as /predict/full
+    Optional: "generate_sms": true  to also generate SMS variant
+    """
+    try:
+        if not ANTHROPIC_API_KEY:
+            return jsonify({
+                "success": False,
+                "error":   "ANTHROPIC_API_KEY not set"
+            }), 500
+
+        data     = request.get_json()
+        features = build_request_features(data)
+
+        # Run all ML predictions
+        engagement  = predict_engagement(features)
+        channel_rec = predict_channel(features)
+        product_rec = predict_product(features)
+        conversion  = predict_conversion(features)
+        segment     = get_segment(features)
+
+        recommended_channel = channel_rec.get("recommended_channel", "WhatsApp")
+
+        content_b = generate_content_brief(
+            features,
+            product  = product_rec.get("recommended_product", ""),
+            channel  = recommended_channel,
+            language = features.get("language", "Hindi")
+        )
+
+        # Build farmer dict
+        farmer = {
+            "grower_id":           data.get("grower_id", "unknown"),
+            "crop":                features.get("crop", "wheat"),
+            "language":            features.get("language", "Hindi"),
+            "district":            features.get("district", "your district"),
+            "state":               features.get("state", ""),
+            "growth_stage":        content_b.get("growth_stage", "tillering"),
+            "persona":             segment.get("persona", "farmer"),
+            "recommended_product": product_rec.get("recommended_product", ""),
+            "device_score":        features.get("device_score", 2),
+            "grower_age":          features.get("grower_age", 40),
+            "grower_farm_size":    features.get("grower_farm_size", 2.0),
+            "temperature":         features.get("temperature", 25),
+            "is_raining":          features.get("is_raining", 0),
+            "disease_pressure":    features.get("disease_pressure", 0),
+            "harvest_urgency":     features.get("harvest_urgency", 0),
+        }
+
+        # Generate primary content (recommended channel)
+        primary_content = generate_content(farmer, recommended_channel, ANTHROPIC_API_KEY)
+
+        # Generate SMS backup if requested or if primary is not SMS
+        sms_content = None
+        if data.get("generate_sms", False) and recommended_channel != "SMS":
+            sms_content = generate_content(farmer, "SMS", ANTHROPIC_API_KEY)
+
+        # Timing
+        timing = {
+            "is_optimal_timing":  features.get("season_phase") == 1,
+            "recommended_window": "December–February (peak Rabi growth)",
+            "best_send_day":      "Tuesday or Thursday",
+            "harvest_urgency":    bool(features.get("harvest_urgency", 0))
+        }
+
+        # Weather
+        weather = {
+            "temperature":      features.get("temperature"),
+            "humidity":         features.get("humidity"),
+            "is_raining":       bool(features.get("is_raining", 0)),
+            "disease_alert":    bool(features.get("disease_pressure", 0)),
+            "comfort_score":    features.get("comfort_score"),
+            "receptivity_boost":features.get("receptivity_boost")
+        }
+
+        return jsonify({
+            "grower_id":   data.get("grower_id", "unknown"),
+            "segment":     segment,
+            "weather":     weather,
+            "predictions": {
+                "engagement": engagement,
+                "channel":    channel_rec,
+                "product":    product_rec,
+                "conversion": conversion,
+                "timing":     timing
+            },
+            "generated_content": {
+                "primary":        primary_content,
+                "sms_backup":     sms_content,
+                "content_brief":  content_b
+            },
+            "campaign_action": {
+                "should_target":       conversion["should_target"],
+                "priority":            conversion["conversion_tier"],
+                "priority_score":      conversion["priority_score"],
+                "recommended_channel": recommended_channel,
+                "recommended_product": product_rec.get("recommended_product", ""),
+                "persona":             segment["persona"],
+                "disease_alert":       bool(features.get("disease_pressure", 0))
+            }
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e),
+                        "trace": traceback.format_exc()}), 500
 
 if __name__ == "__main__":
     load_models()
