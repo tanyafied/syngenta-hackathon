@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  --dark-green: #1B5E20;
+  --leaf-green: #4CAF50;
+  --light-green: #A5D6A7;
+  --soil-brown: #6D4C41;
+  --cream: #F5F5DC;
+  --yellow-accent: #FBC02D;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--cream);
+  font-family: Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+}
+
+.glass {
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.3);
+}
+
+.hero-gradient {
+  background:
+    linear-gradient(rgba(27,94,32,0.8), rgba(27,94,32,0.5)),
+    url('https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&q=80&w=2000');
+
+  background-size: cover;
+  background-position: center;
+}
+
+.card-hover:hover {
+  transform: translateY(-10px);
+  transition: 0.3s;
+}
