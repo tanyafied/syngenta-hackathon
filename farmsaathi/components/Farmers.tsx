@@ -8,22 +8,14 @@ export default function Farmers() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-<<<<<<< HEAD
-  // Update this to point to your backend folder server on port 8080!
-  fetch("http://localhost:8080/api/v1/farmers")
-    .then((res) => {
-      if (!res.ok) throw new Error("Backend server error");
-      return res.json();
-    })
-    .then((data) => setFarmers(data))
-    .catch((err) => console.error("Error loading farmers list:", err));
-=======
-
-    fetch("http://localhost:5000/farmers")
-      .then((res) => res.json())
-      .then((data) => setFarmers(data));
-
->>>>>>> f202192bf9a921f741714440c2c9d8d6367fb2aa
+    // Point cleanly to your backend folder server on port 8080
+    fetch("http://localhost:8080/api/v1/farmers")
+      .then((res) => {
+        if (!res.ok) throw new Error("Backend server error");
+        return res.json();
+      })
+      .then((data) => setFarmers(data))
+      .catch((err) => console.error("Error loading farmers list:", err));
   }, []);
 
   return (
