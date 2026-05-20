@@ -1,140 +1,105 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, X } from "lucide-react";
 
 export default function Navbar() {
+  const [isOpen, setIsOpen] = useState(false);
 
-  const [open, setOpen] = useState(false);
+  const navItems = [
+    { name: "Weather", href: "#weather" },
+    { name: "Register", href: "#register" },
+    { name: "Insights", href: "#insights" },
+    { name: "Syngenta Products", href: "#syngenta-products" }, // 💡 Added right between Insights and Support
+    { name: "Support", href: "#contact" },
+  ];
+
+  const handleScroll = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    e.preventDefault();
+    const targetElement = document.querySelector(href);
+    if (targetElement) {
+      targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    setIsOpen(false);
+  };
 
   return (
-
-    <nav className="fixed top-0 left-0 w-full z-50 bg-white/80 backdrop-blur-lg border-b border-green-100">
-
-      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#F5F5DC]/90 backdrop-blur-md border-b border-green-900/10 transition-all duration-300">
+      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+        
         {/* LOGO */}
-
-        <div>
-
-          <h1 className="text-3xl font-black text-green-900">
-            FarmSaathi
-          </h1>
-
-          <p className="text-sm text-green-700">
+        <div className="flex flex-col">
+          <span className="text-2xl font-black text-green-950 tracking-tight">
+            AgriConnect
+          </span>
+          <span className="text-xs font-semibold text-green-700 uppercase tracking-widest -mt-1">
             Smart Farming Intelligence
-          </p>
-
+          </span>
         </div>
 
-        {/* DESKTOP MENU */}
+        {/* DESKTOP NAV ITEMS */}
+        <div className="hidden md:flex items-center space-x-8">
+          {navItems.map((item) => (
+            <a
+              key={item.name}
+              href={item.href}
+              onClick={(e) => handleScroll(e, item.href)}
+              className="text-base font-semibold text-green-900 hover:text-green-700 transition relative py-2 after:content-[''] after:absolute after:bottom-0 after:left-0 after:w-0 after:h-0.5 after:bg-green-700 hover:after:w-full after:transition-all"
+            >
+              {item.name}
+            </a>
+          ))}
+        </div>
 
-        <div className="hidden lg:flex items-center gap-8 text-green-900 font-semibold">
-
-          <a
-            href="#weather"
-            className="hover:text-green-600 transition"
-          >
-            Weather
-          </a>
-
+        {/* RIGHT SIDE CTA */}
+        <div className="hidden md:flex items-center">
           <a
             href="#register"
-            className="hover:text-green-600 transition"
+            onClick={(e) => handleScroll(e, "#register")}
+            className="bg-green-800 hover:bg-green-900 text-white font-bold px-6 py-3 rounded-2xl transition shadow-md hover:shadow-lg transform active:scale-95"
           >
-            Register
+            Register Farm
           </a>
-
-          <a
-            href="#products"
-            className="hover:text-green-600 transition"
-          >
-            Fertilizers
-          </a>
-
-          <a
-            href="#analytics"
-            className="hover:text-green-600 transition"
-          >
-            Insights
-          </a>
-
-          <a
-            href="#contact"
-            className="hover:text-green-600 transition"
-          >
-            Support
-          </a>
-
         </div>
 
-        {/* DESKTOP BUTTON */}
-
-        <a href="#register">
-
-          <button className="hidden lg:block bg-green-800 hover:bg-green-900 text-white px-7 py-3 rounded-2xl font-bold transition">
-
-            Register Farm
-
-          </button>
-
-        </a>
-
-        {/* MOBILE MENU BUTTON */}
-
+        {/* MOBILE MENU TOGGLE */}
         <button
-          className="lg:hidden text-green-900"
-          onClick={() => setOpen(!open)}
+          onClick={() => setIsOpen(!isOpen)}
+          className="md:hidden text-green-950 focus:outline-none p-2"
+          aria-label="Toggle Navigation Menu"
         >
-
-          {open ? <X size={32} /> : <Menu size={32} />}
-
+          <svg className="h-6 w-6 fill-none stroke-current" viewBox="0 0 24 24">
+            {isOpen ? (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16" />
+            )}
+          </svg>
         </button>
-
       </div>
 
-      {/* MOBILE MENU */}
-
-      {open && (
-
-        <div className="lg:hidden bg-white border-t border-green-100 px-6 py-8 flex flex-col gap-6 text-green-900 font-semibold shadow-lg">
-
-          <a href="#weather">
-            Weather
+      {/* MOBILE DROPDOWN CONTAINER */}
+      {isOpen && (
+        <div className="md:hidden bg-[#F5F5DC] border-b border-green-900/10 px-6 py-6 space-y-4 animate-fadeIn">
+          {navItems.map((item) => (
+            <a
+              key={item.name}
+              href={item.href}
+              onClick={(e) => handleScroll(e, item.href)}
+              className="block text-lg font-bold text-green-950 hover:text-green-700 transition"
+            >
+              {item.name}
+            </a>
+          ))}
+          <hr className="border-green-900/10 my-4" />
+          <a
+            href="#register"
+            onClick={(e) => handleScroll(e, "#register")}
+            className="block text-center bg-green-800 text-white font-bold py-4 rounded-xl shadow-md"
+          >
+            Register Farm
           </a>
-
-          <a href="#register">
-            Register
-          </a>
-
-          <a href="#products">
-            Fertilizers
-          </a>
-
-          <a href="#analytics">
-            Insights
-          </a>
-
-          <a href="#contact">
-            Support
-          </a>
-
-          <a href="#register">
-
-            <button className="w-full bg-green-800 text-white py-4 rounded-2xl font-bold">
-
-              Register Farm
-
-            </button>
-
-          </a>
-
         </div>
-
       )}
-
     </nav>
-
   );
-
 }
