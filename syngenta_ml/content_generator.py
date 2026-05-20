@@ -191,7 +191,7 @@ def generate_content(farmer: dict, channel: str, api_key: str = None) -> dict:
     try:
         # Utilizing efficient gemini-3-flash model
         response = client.models.generate_content(
-            model="gemini-3-flash",
+            model="gemini-2.0-flash",
             contents=user_prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
