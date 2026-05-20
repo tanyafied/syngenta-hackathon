@@ -1,36 +1,118 @@
 export default function Footer() {
+
   return (
-    <footer className="bg-gradient-to-b from-green-900 to-black text-white py-16 px-6">
+
+    <footer
+      id="contact"
+      className="bg-green-950 text-white px-6 py-20"
+    >
 
       <div className="max-w-7xl mx-auto">
 
-        <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="grid lg:grid-cols-4 gap-12">
+
+          {/* BRAND */}
 
           <div>
-            <h2 className="text-3xl font-bold">
+
+            <h2 className="text-4xl font-black mb-4">
               FarmSaathi
             </h2>
 
-            <p className="text-green-200/60 mt-2">
-              Smart farming for better harvests.
+            <p className="text-green-200 leading-relaxed">
+
+              AI-powered agricultural intelligence platform
+              helping farmers make smarter cultivation,
+              fertilizer, and selling decisions.
+
             </p>
+
           </div>
 
-          <div className="flex gap-8 text-green-200/70">
-            <a href="#">Home</a>
-            <a href="#">Services</a>
-            <a href="#">Products</a>
-            <a href="#">Contact</a>
+          {/* PLATFORM */}
+
+          <div>
+
+            <h3 className="text-2xl font-bold mb-5">
+              Platform
+            </h3>
+
+            <div className="space-y-3 text-green-200">
+
+              <p>Weather Intelligence</p>
+
+              <p>Crop Prediction</p>
+
+              <p>Profit Estimation</p>
+
+              <p>Fertilizer Recommendation</p>
+
+            </div>
+
+          </div>
+
+          {/* SUPPORT */}
+
+          <div>
+
+            <h3 className="text-2xl font-bold mb-5">
+              Support
+            </h3>
+
+            <div className="space-y-3 text-green-200">
+
+              <p>Farmer Assistance</p>
+
+              <p>Offline SMS Alerts</p>
+
+              <p>Regional Language Support</p>
+
+              <p>24×7 Help Center</p>
+
+            </div>
+
+          </div>
+
+          {/* CONTACT */}
+
+          <div>
+
+            <h3 className="text-2xl font-bold mb-5">
+              Contact
+            </h3>
+
+            <div className="space-y-3 text-green-200">
+
+              <p>📞 +91 98765 43210</p>
+
+              <p>📧 support@farmsaathi.com</p>
+
+              <p>📍 Odisha, India</p>
+
+            </div>
+
           </div>
 
         </div>
 
-        <div className="border-t border-green-800 mt-10 pt-6 text-center text-green-200/40">
-          © 2026 FarmSaathi. All rights reserved.
+        {/* BOTTOM */}
+
+        <div className="border-t border-green-800 mt-16 pt-8 flex flex-col lg:flex-row justify-between gap-5 text-green-300">
+
+          <p>
+            © 2026 FarmSaathi. All rights reserved.
+          </p>
+
+          <p>
+            Empowering Farmers Through Smart Agricultural Intelligence 🌾
+          </p>
+
         </div>
 
       </div>
 
     </footer>
+
   );
+
 }

@@ -4,49 +4,157 @@ import { motion } from "framer-motion";
 
 export default function Hero() {
   return (
-    <section
-      id="home"
-      className="hero-gradient h-screen flex items-center justify-center text-center px-4 pt-20 relative overflow-hidden"
-      
-    >
-      <div className="absolute top-20 left-20 w-72 h-72 bg-green-400 rounded-full blur-3xl opacity-20"></div>
 
-      <div className="absolute bottom-20 right-20 w-72 h-72 bg-yellow-300 rounded-full blur-3xl opacity-20"></div>
-      <motion.div
-        initial={{ opacity: 0, y: 50 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 1 }}
-        className="max-w-4xl relative z-10"
-      >
+    <section className="min-h-screen bg-gradient-to-br from-green-950 via-green-900 to-green-800 text-white px-6 pt-32">
 
-        <span className="bg-yellow-400 text-green-900 px-4 py-1 rounded-full text-sm font-bold mb-4 inline-block">
-          SMART FARMING PLATFORM
-        </span>
+      <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-16 items-center">
 
-        <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold text-white mb-6">
-          Smart Farming.
-          <br />
-          Better Harvests.
-        </h1>
+        {/* LEFT */}
 
-        <p className="text-base md:text-xl text-green-50 mb-10 leading-relaxed">
-          Helping farmers with weather insights, crop guidance,
-          fertilizer recommendations, and better market opportunities.
-        </p>
+        <div>
 
-        <div className="flex flex-col md:flex-row justify-center gap-4">
+          <div className="inline-block bg-green-700/40 px-5 py-2 rounded-full mb-6">
 
-          <button className="bg-yellow-500 hover:bg-yellow-600 text-green-900 px-10 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg">
-            Register as Farmer
-          </button>
+            🌾 Smart Farming Intelligence Platform
 
-          <button className="glass text-white px-10 py-4 rounded-xl font-bold text-lg border border-white hover:bg-white/20 transition-all hover:scale-105">
-            Explore Products
-          </button>
+          </div>
+
+          <h1 className="text-6xl font-black leading-tight mb-8">
+
+            Know What To
+            <span className="text-yellow-400"> Grow</span>,
+            <br />
+            When To Sell,
+            <br />
+            And How Much
+            <span className="text-green-300"> Profit</span>
+            You Can Make.
+
+          </h1>
+
+          <p className="text-xl text-green-100 mb-10 leading-relaxed">
+
+            FarmSaathi helps farmers with
+            weather insights, crop recommendations,
+            fertilizer suggestions, and profit prediction
+            based on their region.
+
+          </p>
+
+          <div className="flex flex-wrap gap-5">
+
+            <a href="#weather">
+
+              <button className="bg-yellow-400 hover:bg-yellow-300 text-green-950 px-10 py-4 rounded-2xl font-bold text-lg transition">
+
+                Check Farm Insights
+
+              </button>
+
+            </a>
+
+            <a href="#register">
+
+              <button className="border border-white/30 hover:bg-white/10 px-10 py-4 rounded-2xl font-bold text-lg transition">
+
+                Register Farm
+
+              </button>
+
+            </a>
+
+          </div>
 
         </div>
 
-      </motion.div>
+        {/* RIGHT */}
+
+        <div className="glass rounded-[2rem] p-8 bg-white/10 backdrop-blur-lg border border-white/20 shadow-2xl">
+
+          <div className="flex items-center justify-between mb-8">
+
+            <div>
+
+              <p className="text-green-200">
+                Current Location
+              </p>
+
+              <h3 className="text-3xl font-bold">
+                Brahmapur, Odisha
+              </h3>
+
+            </div>
+
+            <div className="text-6xl">
+              🌦
+            </div>
+
+          </div>
+
+          <div className="grid grid-cols-2 gap-5">
+
+            <div className="bg-white/10 p-5 rounded-2xl">
+
+              <p className="text-green-200 mb-2">
+                Temperature
+              </p>
+
+              <h2 className="text-4xl font-bold">
+                31°C
+              </h2>
+
+            </div>
+
+            <div className="bg-white/10 p-5 rounded-2xl">
+
+              <p className="text-green-200 mb-2">
+                Rainfall
+              </p>
+
+              <h2 className="text-4xl font-bold">
+                High
+              </h2>
+
+            </div>
+
+            <div className="bg-white/10 p-5 rounded-2xl">
+
+              <p className="text-green-200 mb-2">
+                Best Crop
+              </p>
+
+              <h2 className="text-3xl font-bold">
+                Maize
+              </h2>
+
+            </div>
+
+            <div className="bg-white/10 p-5 rounded-2xl">
+
+              <p className="text-green-200 mb-2">
+                Expected Profit
+              </p>
+
+              <h2 className="text-3xl font-bold">
+                ₹45K
+              </h2>
+
+            </div>
+
+          </div>
+
+          <div className="mt-8 bg-yellow-400 text-green-950 rounded-2xl p-5 font-semibold text-lg">
+
+            Recommended Fertilizer:
+            Syngenta CropBoost NPK
+
+          </div>
+
+        </div>
+
+      </div>
+
     </section>
-  );
+
+    )
 }
