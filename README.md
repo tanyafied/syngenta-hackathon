@@ -64,19 +64,12 @@ To initialize the full-stack system layout, open **three independent terminal wi
    pip install flask flask-cors twilio python-dotenv requests
    ```
 
-3. Set up your local runtime secrets. Create a file named `.env` inside the `backend/` directory:
-   ```
-   TWILIO_ACCOUNT_SID=your_account_sid_here
-   TWILIO_AUTH_TOKEN=your_auth_token_here
-   TWILIO_SANDBOX_NUMBER=+14155238886
-   ```
-
-4. Seed the local SQLite database from growers.csv:
+3. Seed the local SQLite database from growers.csv:
    ```bash
    python database.py
    ```
 
-5. Fire up the central API routing system architecture (Listens on Port 8080):
+4. Fire up the central API routing system architecture (Listens on Port 8080):
    ```bash
    python server.py
    ```
