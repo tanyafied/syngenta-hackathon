@@ -29,6 +29,7 @@ The system functions on a decoupled, multi-process architecture to manage high-t
 To initialize the full-stack system layout, open **three independent terminal windows** and execute the corresponding commands sequentially:
 
 ### 🤖 Terminal 1: Machine Learning Prediction Engine
+<<<<<<< HEAD
 
 1. Navigate into the ML resource folder:
    ```bash

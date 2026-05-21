@@ -6,9 +6,21 @@ import uuid
 import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from dotenv import load_dotenv
+from twilio.rest import Client
+
+# Load environment variables cleanly from .env file
+load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+
+# 🔑 CORS configuration: Accepts requests from local environment or live Vercel deployments
+CORS(app, resources={r"/api/*": {
+    "origins": [
+        "http://localhost:3000",
+        "https://farmsaathi.vercel.app" # Change to your actual Vercel live domain once deployed!
+    ]
+}})
 
 ML_SERVER_URL = "http://localhost:5000/predict/full"
 DB_PATH = "farmers.db"
@@ -33,6 +45,11 @@ LOCALIZED_TEMPLATES = {
     "Punjabi": "ਪਿਆਰੇ ਕਿਸਾਨ ਵੀਰੋ, ਤੁਹਾਡੀ {crop} ਦੀ ਫਸਲ ਲਈ ਮਾਹਿਰਾਂ ਨੇ {product} ਦੀ ਵਰਤੋਂ ਦੀ ਸਲਾਹ ਦਿੱਤੀ ਹੈ। ਮੰਡੀ ਵਿੱਚ ਪ੍ਰੀਮੀਅਮ ਰੇਟ {rate} ਹੈ। ਕਿਸਾਨ ਰਥ ਗੱਡੀ ਤਿਆਰ ਹੈ!",
     "default": "Dear Farmer, for your {crop} crop, experts highly recommend applying {product}. Current premium Mandi rate is {rate}. Logistics options are ready for immediate dispatch via KisanRath Freight!"
 }
+
+# 🔐 SECURE EXTREMETIES FOR SYSTEM DEPLOYMENT
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_SANDBOX_NUMBER = os.getenv("TWILIO_SANDBOX_NUMBER")
 
 @app.route('/api/v1/farmers', methods=['GET'])
 def get_farmers():
@@ -105,8 +122,7 @@ def get_farmers():
                 "mandi_context": {
                     "market_rate": f"₹{price_rule['base']}/quintal",
                     "premium_rate": premium_rate_str
-                },
-                "logistics_options": LOGISTICS_FLEET
+                }
             })
                 
         return jsonify(farmers_list)
@@ -114,17 +130,9 @@ def get_farmers():
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
-from twilio.rest import Client
-
-# 🔑 PASTE YOUR TWILIO CREDENTIALS HERE
-TWILIO_ACCOUNT_SID = "ACdc8999c8d909468983076db2fbc8a760"
-TWILIO_AUTH_TOKEN = "f48d449be8ef80dd7cef0b7bfa8e2a76"
-TWILIO_SANDBOX_NUMBER = "+14155238886"
-
 @app.route('/api/v1/farmers/register', methods=['POST'])
 def register_farmer():
-    # 🚨 FORCED ENTRY DETECTION LOG
-    print("\n[HOOK DETECTED] Next.js frontend has successfully breached the endpoint!", flush=True)
+    print("\n[HOOK DETECTED] Incoming farmer tracking payload registered on endpoint!", flush=True)
     try:
         data = request.get_json() or {}
         
@@ -145,7 +153,7 @@ def register_farmer():
         soil_type = data.get("soil_type", "Clay Soil")
         crop = "wheat" if "clay" in soil_type.lower() else "maize"
 
-        # Save to database
+        # Save record execution inside SQLite database instance
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
@@ -158,14 +166,13 @@ def register_farmer():
         conn.commit()
         conn.close()
 
-        # Dynamic Content Generation
         preferred_channel = "WhatsApp" if ui_lang in ["English", "Hindi", "Tamil"] else "SMS"
         simulated_product = "Syngenta Virtako + Amistar Top" if crop == "wheat" else "Syngenta YieldMax Booster"
         
         whatsapp_message_body = f"🌾 AgriConnect Advisory: Hello {raw_name}! Crop analytics for your field in {district} show high climate moisture metrics. We recommend deploying {simulated_product} within 24 hours."
 
-        # 🚀 REAL TWILIO WHATSAPP GATEWAY DISPATCH
-        if phone_number:
+        # 🚀 REAL TWILIO WHATSAPP GATEWAY DISPATCH WITH REPAIRED VARIABLES
+        if phone_number and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
             print(f"📡 Forwarding dispatch metadata to Twilio targeting: {phone_number}...", flush=True)
             try:
                 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -177,6 +184,8 @@ def register_farmer():
                 print(f"✅ Real WhatsApp dispatched successfully! Message SID: {message.sid}", flush=True)
             except Exception as twilio_err:
                 print(f"❌ Twilio Gateway Error: {twilio_err}", flush=True)
+        else:
+            print("⚠️ Skipping Twilio Broadcast. Missing phone data configuration or API keys.", flush=True)
 
         return jsonify({
             "status": "success", 
@@ -210,26 +219,5 @@ def generate_message():
 
 
 if __name__ == '__main__':
-    print("\n--- [BOOTUP] Initialization complete. Actively monitoring inbound streams on Port 8080 ---", flush=True)
-    app.run(host='0.0.0.0', port=8080, debug=True)
-
-
-@app.route('/api/v1/farmers/generate-message', methods=['POST'])
-def generate_message():
-    try:
-        data = request.get_json() or {}
-        lang = data.get("language", "Hindi")
-        crop = data.get("crop", "Wheat")
-        prod = data.get("recommended_product", "Tilt 250 EC")
-        rate = data.get("premium_rate", "₹2455/quintal")
-
-        template = LOCALIZED_TEMPLATES.get(lang, LOCALIZED_TEMPLATES["default"])
-        formatted_msg = template.format(crop=crop, product=prod, rate=rate)
-
-        return jsonify({"status": "success", "message": formatted_msg})
-    except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
-
-
-if __name__ == '__main__':
+    print("\n--- [BOOTUP] Architecture loaded. Monitoring inbound telemetry streams on Port 8080 ---", flush=True)
     app.run(host='0.0.0.0', port=8080, debug=True)
