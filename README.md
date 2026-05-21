@@ -178,4 +178,4 @@ syngenta-hackathon/
 
 ---
 
-*Built for Syngenta IITM Hackathon 2026 — FarmSaathi Team*
+*Built for Syngenta IITM Hackathon 2026 — AgriConnect Team*
