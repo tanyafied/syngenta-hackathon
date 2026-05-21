@@ -13,6 +13,7 @@ import Register from "@/components/Register";
 import Farmers from "@/components/Farmers";
 import Contact from "@/components/Contact";
 import Footer from "@/components/Footer";
+import ChatBot from "@/components/ChatBot";
 
 export default function Home() {
   const [activeLocation, setActiveLocation] = useState("Chennai");
@@ -39,6 +40,8 @@ export default function Home() {
       <Weather activeLocation={activeLocation} />
       
       <Register onRegistrationSuccess={handleRegistrationComplete} />
+
+      <ChatBot />
       
       <Farmers />
       <Contact />
