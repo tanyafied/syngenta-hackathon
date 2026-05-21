@@ -107,15 +107,13 @@ Follow these precise verification steps to demonstrate the end-to-end telemetry 
 
 1. Launch your browser workspace to the web application page: `http://localhost:3000`
 
-2. Opt-in your hardware: Grant Twilio clear messaging rights by texting your custom sandbox join string (e.g., `join details-velvet`) to the official Twilio contact portal: **+1 415 523 8886**.
+2. Fill out the farmer registration parameters completely inside the input dashboard block. Ensure the target phone number strictly follows international format syntax (e.g., `+919886799166`).
 
-3. Fill out the farmer registration parameters completely inside the input dashboard block. Ensure the target phone number strictly follows international format syntax (e.g., `+919888499166`).
+3. Select **"Generate Smart Farming Insights"**.
 
-4. Select **"Generate Smart Farming Insights"**.
+4. **Observe:** The browser client routes the dataset through the Flask orchestrator to pull predictive modeling results. The user interface metrics will refresh seamlessly, and your physical mobile phone will receive the real-time crop alert instantly.
 
-5. **Observe:** The browser client routes the dataset through the Flask orchestrator to pull predictive modeling results. The user interface metrics will refresh seamlessly, and your physical mobile phone will receive the real-time crop alert instantly.
-
-6. **Market Match:** Use the Navbar links to glide down to the Insights or Dealers view modules. The system will automatically showcase local Syngenta procurement nodes specifically filtered to your registered zone.
+5. **Market Match:** Use the Navbar links to glide down to the Insights or Dealers view modules. The system will automatically showcase local Syngenta procurement nodes specifically filtered to your registered zone.
 
 ---
 
