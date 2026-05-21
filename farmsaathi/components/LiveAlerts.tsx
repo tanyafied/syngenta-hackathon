@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-// 🔌 Hooked directly into your live operational Flask server mapping port 8080
 const BACKEND_API = "http://localhost:8080/api/v1/farmers";
 
 export default function LiveAlerts() {
@@ -13,14 +12,12 @@ export default function LiveAlerts() {
   useEffect(() => {
     const fetchLatestTelemetry = async () => {
       try {
-        // 🔄 Fetch the dynamic registries array populated by the SQLite file tracker
         const res = await fetch(BACKEND_API, {
           method: "GET",
           headers: { "Content-Type": "application/json" },
         });
         const json = await res.json();
         
-        // Target the absolute latest entry in the tracking array
         if (json && json.length > 0) {
           setFarmerData(json[0]);
         }
@@ -33,7 +30,6 @@ export default function LiveAlerts() {
     fetchLatestTelemetry();
   }, []);
 
-  // Safe variable extractions mapped perfectly to your server.py key structure
   const activeDistrict = farmerData?.district || "Kanpur Nagar";
   const temperature = farmerData?.temperature || 34.2;
   const humidity = farmerData?.humidity || 45.0;
@@ -43,14 +39,13 @@ export default function LiveAlerts() {
   const priorityScore = farmerData?.conversion_probability || 87;
 
   const buildAlerts = () => {
-    const alerts = [
+    return [
       `🚨 Climate moisture alerts for ${activeDistrict} — apply ${product} to secure field yields!`,
       `💬 Outbound optimization framework suggests immediate dispatch via ${channel}.`,
       `🎯 Real-time user profile matches consumer segment: ${persona}.`,
       `🌡️ Live field conditions show ambient warmth around ${temperature.toFixed(1)}°C with ${humidity.toFixed(0)}% humidity.`,
       "📈 System metric calculation logs: Local grower interaction is tracking 18% higher this week."
     ];
-    return alerts;
   };
 
   const alerts = buildAlerts();
@@ -63,7 +58,7 @@ export default function LiveAlerts() {
   }, [alerts.length]);
 
   return (
-    <section className="py-20 px-6 bg-gradient-to-r from-green-900 to-green-700 text-white overflow-hidden">
+    <section id="insights" className="py-20 px-6 bg-gradient-to-r from-green-900 to-green-700 text-white overflow-hidden scroll-mt-12">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
           

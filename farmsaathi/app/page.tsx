@@ -1,8 +1,12 @@
+"use client";
+
+import { useState } from "react";
 import Navbar from "@/components/Navbar";
 import Hero from "@/components/Hero";
 import Stats from "@/components/LiveAlerts";
 import Analytics from "@/components/Analytics";
 import Recommendations from "@/components/Recommendations";
+import Dealers from "@/components/Dealers"; // 🌟 Newly Included Component Row
 import Products from "@/components/Products";
 import Weather from "@/components/Weather";
 import Register from "@/components/Register";
@@ -11,44 +15,34 @@ import Contact from "@/components/Contact";
 import Footer from "@/components/Footer";
 
 export default function Home() {
+  const [activeLocation, setActiveLocation] = useState("Chennai");
+
+  const handleRegistrationComplete = (locationName: string) => {
+    if (locationName) {
+      setActiveLocation(locationName);
+    }
+  };
+
   return (
-
     <main className="bg-[#F5F5DC] overflow-x-hidden">
-
-      {/* NAVBAR */}
       <Navbar />
-
-      {/* LANDING HERO */}
       <Hero />
-
-      {/* LIVE INSIGHTS */}
       <Stats />
-
-      {/* DATA ANALYTICS */}
       <Analytics />
 
-      {/* SMART RECOMMENDATIONS */}
-      <Recommendations />
-
-      {/* FERTILIZER PRODUCTS */}
+      <Recommendations activeLocation={activeLocation} />
+      
+      {/* 🌟 Mounted the newly added Dealers section row directly into the flow */}
+      <Dealers activeLocation={activeLocation} />
+      
       <Products />
-
-      {/* WEATHER + ALERTS */}
-      <Weather />
-
-      {/* FARMER REGISTRATION */}
-      <Register />
-
-      {/* REGISTERED FARMERS */}
+      <Weather activeLocation={activeLocation} />
+      
+      <Register onRegistrationSuccess={handleRegistrationComplete} />
+      
       <Farmers />
-
-      {/* CONTACT */}
       <Contact />
-
-      {/* FOOTER */}
       <Footer />
-
     </main>
-
   );
 }

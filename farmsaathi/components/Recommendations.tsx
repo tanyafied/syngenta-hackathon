@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-// 🔌 Points directly to your operational Flask backend microservice proxy route
 const BACKEND_API = "http://localhost:8080/api/v1/farmers";
 
 interface RecommendationsProps {
@@ -20,7 +19,6 @@ export default function Recommendations({ activeLocation }: RecommendationsProps
       setError(false);
       
       try {
-        // 🔄 Requesting the latest registered list straight from the working SQLite database
         const res = await fetch(BACKEND_API, {
           method: "GET",
           headers: { "Content-Type": "application/json" }
@@ -29,7 +27,6 @@ export default function Recommendations({ activeLocation }: RecommendationsProps
         if (!res.ok) throw new Error("Data orchestration bridge connection failed.");
         const json = await res.json();
         
-        // Take the absolute latest farmer profile added to the list
         if (json && json.length > 0) {
           setData(json[0]); 
         } else {
@@ -44,9 +41,8 @@ export default function Recommendations({ activeLocation }: RecommendationsProps
     };
 
     fetchLatestFarmerData();
-  }, [activeLocation]); // Re-fetches records seamlessly whenever an explicit location change registers
+  }, [activeLocation]);
 
-  // Clean object reference mappings matching your server.py return keys
   const persona = data?.persona || "Digital-Savvy Large Farmer";
   const recommendedProduct = data?.recommended_product || "Syngenta Virtako + Amistar Top";
   const modelConfidence = data?.confidence || 92;
@@ -88,7 +84,6 @@ export default function Recommendations({ activeLocation }: RecommendationsProps
         {data && !loading && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
 
-            {/* PERSONA & PRODUCT ADVISORY CARD */}
             <div className="bg-white rounded-[2rem] p-8 shadow-xl border border-green-100">
               <div className="flex justify-between items-center mb-6">
                 <div>
@@ -120,13 +115,11 @@ export default function Recommendations({ activeLocation }: RecommendationsProps
               </div>
             </div>
 
-            {/* DYNAMIC METRIC TARGET CARDS */}
             <div className="bg-white rounded-[2rem] p-8 shadow-xl border border-green-100">
               <div className="mb-6">
                 <p className="text-gray-500 text-sm mb-4">📍 Live Environment Telemetry — {data.district || activeLocation}</p>
                 <div className="grid grid-cols-2 gap-4">
                   
-                  {/* Dynamic Temp Card */}
                   <div className="bg-blue-50 rounded-2xl p-5 text-center">
                     <p className="text-4xl font-black text-blue-900">
                       {temperature.toFixed(1)}°C
@@ -134,7 +127,6 @@ export default function Recommendations({ activeLocation }: RecommendationsProps
                     <p className="text-blue-600 text-sm mt-2 font-medium">Ambient Temperature</p>
                   </div>
                   
-                  {/* Dynamic Humidity Card */}
                   <div className="bg-cyan-50 rounded-2xl p-5 text-center">
                     <p className="text-4xl font-black text-cyan-900">
                       {humidity.toFixed(0)}%
