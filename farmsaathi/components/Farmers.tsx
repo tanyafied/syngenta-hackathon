@@ -8,7 +8,7 @@ export default function Farmers() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("http://localhost:8080/api/v1/farmers")
+    fetch("http://127.0.0.1:8080/api/v1/farmers")
       .then((res) => {
         if (!res.ok) throw new Error("Backend orchestration node offline");
         return res.json();

@@ -15,12 +15,7 @@ load_dotenv()
 app = Flask(__name__)
 
 # 🔑 CORS configuration: Accepts requests from local environment or live Vercel deployments
-CORS(app, resources={r"/api/*": {
-    "origins": [
-        "http://localhost:3000",
-        "https://farmsaathi.vercel.app" # Change to your actual Vercel live domain once deployed!
-    ]
-}})
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 ML_SERVER_URL = "http://localhost:5000/predict/full"
 DB_PATH = "farmers.db"
