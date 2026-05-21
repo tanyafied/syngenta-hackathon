@@ -1,6 +1,6 @@
 # 🌾 AgriConnect: Intelligent Hyper-Local Agri-Advisory & Real-Time Outreach Engine
 
-**FarmSaathi** is a data-driven, full-stack agricultural intelligence dashboard designed to optimize grower outreach, predict crop protection demands, and streamline supply chains. By combining regional environment telemetry with predictive machine learning models, the platform instantly profiles farmers, forecasts high-probability input requirements, dispatches automated alerts via a live Twilio WhatsApp gateway, and instantly connects growers to regional Syngenta distribution pipelines.
+**AgriConnect** is a data-driven, full-stack agricultural intelligence dashboard designed to optimize grower outreach, predict crop protection demands, and streamline supply chains. By combining regional environment telemetry with predictive machine learning models, the platform instantly profiles farmers, forecasts high-probability input requirements, dispatches automated alerts via a live Twilio WhatsApp gateway, and instantly connects growers to regional Syngenta distribution pipelines.
 
 ---
 
