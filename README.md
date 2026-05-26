@@ -89,13 +89,20 @@ To initialize the full-stack system layout, open **three independent terminal wi
    npm install
    ```
 
-3. Create a `.env.local` file in the `farmsaathi/` directory:
+3. Set up your local runtime secrets. Create a file named .env inside the backend/ directory:
+   ```bash
+   TWILIO_ACCOUNT_SID=your_account_sid_here
+   TWILIO_AUTH_TOKEN=your_auth_token_here
+   TWILIO_SANDBOX_NUMBER=+14155238886
+   ```
+
+4. Create a `.env.local` file in the `farmsaathi/` directory:
    ```
    NEXT_PUBLIC_ML_API_URL=http://localhost:5000
    NEXT_PUBLIC_BACKEND_URL=http://localhost:8080
    ```
 
-4. Deploy the hot-reloading client application shell runtime (Hosts on Port 3000):
+5. Deploy the hot-reloading client application shell runtime (Hosts on Port 3000):
    ```bash
    npm run dev
    ```
